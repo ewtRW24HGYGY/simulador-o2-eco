@@ -1,0 +1,1511 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Simulador O2 Eco</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+/* Layout: cena 3D da planta no topo (com sinótico 2D ISA-101 como alternativa); abaixo, estado dos Sparks e alarmes;
+   depois setpoints e pontos virtuais lado a lado; lista de I/O ao fim. */
+:root{
+  --bg:#dcdfe2; --panel:#eceef0; --field:#ffffff; --hair:#c3c8cd; --pipe:#7c838a;
+  --ink:#1e2226; --muted:#5b636b; --run:#39414a; --off:#eceef0;
+  --liq:#93abc0; --sludge:#a8957f; --accent:#2c6a88;
+  --alarm:#c62828; --alarm-bg:#fbe3e1; --warn:#b97700; --warn-bg:#fdf0d5; --ok:#2e7a4d;
+  --scene:#c9d2d9; --lbl:rgba(250,251,252,.92);
+  --f-ui:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#1a1e22; --panel:#23282d; --field:#15191c; --hair:#363c42; --pipe:#6c747c;
+  --ink:#e2e5e8; --muted:#9aa2aa; --run:#cfd4d9; --off:#23282d;
+  --liq:#4c6c87; --sludge:#6e5e4b; --accent:#6db1d0;
+  --alarm:#ef5350; --alarm-bg:#3a1f1f; --warn:#e8a317; --warn-bg:#3a3018; --ok:#5cbf85;
+  --scene:#1c2228; --lbl:rgba(30,35,40,.9);
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1a1e22; --panel:#23282d; --field:#15191c; --hair:#363c42; --pipe:#6c747c;
+  --ink:#e2e5e8; --muted:#9aa2aa; --run:#cfd4d9; --off:#23282d;
+  --liq:#4c6c87; --sludge:#6e5e4b; --accent:#6db1d0;
+  --alarm:#ef5350; --alarm-bg:#3a1f1f; --warn:#e8a317; --warn-bg:#3a3018; --ok:#5cbf85;
+  --scene:#1c2228; --lbl:rgba(30,35,40,.9);
+  color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font:15px/1.4 var(--f-ui);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 32px}
+.wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1,h2,h3{margin:0;text-wrap:balance}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;padding-block:12px;border-bottom:1px solid var(--hair)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+.brand{display:flex;flex-direction:column;margin-right:auto;min-width:0}
+.brand h1{font-size:22px;font-weight:700;letter-spacing:.01em}
+.brand span{font-size:13px;color:var(--muted)}
+.clock{display:flex;align-items:baseline;gap:8px}
+.clock b{font:500 22px var(--f-mono)}
+.clock small{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--hair);border-radius:4px;padding:6px 12px;cursor:pointer;font-weight:600}
+button:hover{border-color:var(--pipe)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input[type=number]{background:var(--field);border:1px solid var(--hair);border-radius:4px;padding:4px 6px}
+input[type=number]{width:84px;font-family:var(--f-mono);font-size:13px;text-align:right}
+
+.trip{display:flex;align-items:center;gap:12px;background:var(--alarm);color:#fff;border-radius:6px;padding:10px 14px;font-weight:600}
+.trip .beacon{flex:none;width:14px;height:14px;border-radius:50%;background:#fff;animation:blink 0.84s steps(2,end) infinite}
+@keyframes blink{50%{opacity:.15}}
+@media (prefers-reduced-motion:reduce){.trip .beacon{animation:none}}
+
+.viewbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.viewbar .sep{flex:1}
+.stage{position:relative;background:var(--panel);border:1px solid var(--hair);border-radius:6px;overflow:hidden}
+#view3d{position:relative;height:min(64vh,620px);min-height:380px}
+#view3d canvas{display:block;width:100%;height:100%;touch-action:none}
+#labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.lbl{position:absolute;left:0;top:0;background:var(--lbl);color:var(--ink);
+  border-left:3px solid var(--pipe);border-radius:3px;padding:2px 7px 3px;font-size:12px;line-height:1.25;white-space:nowrap;
+  box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.lbl b{font-weight:700;font-size:12.5px}
+.lbl span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.lbl.on{border-left-color:var(--ok)} .lbl.on span{color:var(--ok)}
+.lbl.al{border-left-color:var(--alarm)} .lbl.al span{color:var(--alarm)}
+.lbl.wn{border-left-color:var(--warn)} .lbl.wn span{color:var(--warn)}
+.lbl.lv{border-left-color:var(--accent)}
+.lbl.lv span,.lbl.al span.mono{font-family:var(--f-mono);text-transform:none;letter-spacing:0}
+.lbl.lv span{color:var(--ink)}
+.hide-labels .lbl{display:none}
+.hint{position:absolute;right:10px;bottom:8px;font-size:12px;color:var(--muted);background:var(--lbl);padding:2px 8px;border-radius:3px;pointer-events:none}
+.fallback{padding:24px;color:var(--muted)}
+#view2d{overflow-x:auto}
+#view2d svg{display:block;width:100%;min-width:780px;height:auto}
+
+svg text{font-family:var(--f-ui)}
+.pipe{fill:none;stroke:var(--pipe);stroke-width:3}
+.pipe.flow{stroke:var(--accent);stroke-dasharray:8 6;animation:flow 0.8s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-14}}
+@media (prefers-reduced-motion:reduce){.pipe.flow{animation:none;stroke-dasharray:none}}
+.vessel{fill:var(--field);stroke:var(--ink);stroke-width:1.5}
+.liq{fill:var(--liq)} .sl{fill:var(--sludge)}
+.eq{fill:var(--off);stroke:var(--ink);stroke-width:1.5}
+.eq.on{fill:var(--run)}
+.tri{fill:var(--ink)}
+.tag{font-weight:700;font-size:13px;fill:var(--ink)}
+.sub{font-size:11px;fill:var(--muted)}
+.val{font-family:var(--f-mono);font-size:12px;fill:var(--ink)}
+.mark{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3;opacity:.75}
+.mark.hh{stroke:var(--alarm);opacity:1;stroke-width:1.5}
+.mlab{font-size:10.5px;fill:var(--ink);paint-order:stroke;stroke:var(--field);stroke-width:3px}
+.dot{stroke:var(--ink);stroke-width:1.5;fill:var(--field)}
+.dot.c{fill:var(--ink)}
+.dot.f{stroke:var(--warn);stroke-width:3}
+.state{font-size:11px;font-weight:600;fill:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.state.on{fill:var(--ink)}
+.bad{fill:var(--alarm)!important}
+.lamp{fill:var(--off);stroke:var(--ink);stroke-width:1.5}
+.lamp.on{fill:var(--warn)}
+.lamp.red{fill:var(--alarm)}
+.ovf{fill:var(--alarm);font-weight:700;font-size:11px}
+
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.grid2{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}
+@media (max-width:980px){.grid3{grid-template-columns:1fr 1fr}.grid3>.alarms{grid-column:1/-1}}
+@media (max-width:760px){.grid3,.grid2{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card h2 .pill{margin-left:auto}
+.eyebrow{font-size:11.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;border:1px solid var(--hair);background:var(--field);white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:var(--ok)}
+.pill.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.pill.bad{color:var(--alarm);border-color:var(--alarm);background:var(--alarm-bg)}
+.rows{display:flex;flex-direction:column}
+.row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid var(--hair);align-items:baseline}
+.row:first-child{border-top:0}
+.row > span:first-child{color:var(--muted)}
+.row > span:last-child{text-align:right;min-width:0}
+.perm{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;font-size:14px}
+.perm i{font-style:normal;font-weight:700;width:18px;text-align:center}
+.perm .y{color:var(--ok)} .perm .n{color:var(--alarm)}
+
+.alarms ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.alarms li.al{border-left:3px solid var(--alarm);background:var(--alarm-bg);padding:5px 8px;border-radius:3px;font-size:14px}
+.alarms li.al.latch{border-left-color:var(--warn);background:var(--warn-bg)}
+.alarms li.al.crit{border-left-color:var(--alarm);background:var(--alarm-bg);font-weight:600}
+.none{color:var(--muted);font-size:14px}
+.log{max-height:230px;overflow:auto;font-size:13px;border-top:1px solid var(--hair);padding-top:6px}
+.log div{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:2px 0}
+.log time{font:12px var(--f-mono);color:var(--muted)}
+.log .a{color:var(--alarm)} .log .w{color:var(--warn)}
+
+.spgroups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+@media (max-width:520px){.spgroups{grid-template-columns:1fr}}
+fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+legend{padding:0 0 4px}
+.sp{display:grid;grid-template-columns:minmax(0,1fr) auto 3.2em;gap:6px;align-items:center;font-size:14px}
+.sp label{min-width:0}
+.sp small{color:var(--muted);font-size:12px}
+.sp.hh label{color:var(--alarm);font-weight:600}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:14px}
+.chk input{margin-top:3px}
+
+.vp{display:grid;grid-template-columns:7.5em minmax(0,1fr) 4.6em auto;gap:8px;align-items:center;font-size:14px}
+.vp input[type=range]{width:100%;accent-color:var(--accent)}
+.vp output{font:13px var(--f-mono);text-align:right}
+.forces{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;font-size:14px}
+.forces select{font-size:13px}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--hair);white-space:nowrap}
+th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+td.v{font-family:var(--f-mono);font-size:13px}
+tr.forced td{background:var(--warn-bg)}
+tr.new td:nth-child(2) b::after{content:"novo";font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-left:6px}
+.note{font-size:13px;color:var(--muted);max-width:80ch;margin:0}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Simulador O2 Eco</h1>
+      <span>Descritivo de automação Rev. 02 · Spark A (tanques) + Spark B (dosagem, lodo e caçambas)</span>
+    </div>
+    <div class="clock"><small>Tempo simulado</small><b id="clock">00:00:00</b></div>
+    <div class="ctrl">
+      <button id="btnRun" class="primary" type="button">Pausar</button>
+      <label for="speed" class="eyebrow">Velocidade</label>
+      <select id="speed">
+        <option value="1">1×</option>
+        <option value="10">10×</option>
+        <option value="60" selected>60×</option>
+        <option value="300">300×</option>
+      </select>
+      <button id="btnReset" type="button">Reiniciar</button>
+    </div>
+  </header>
+
+  <div class="trip" id="tripBanner" hidden role="alert">
+    <span class="beacon" aria-hidden="true"></span>
+    <span id="tripText">Transbordamento do tanque de lodo</span>
+  </div>
+
+  <section aria-label="Vista do processo" style="display:flex;flex-direction:column;gap:8px">
+    <div class="viewbar">
+      <button type="button" id="tab3d" aria-pressed="true">Vista 3D</button>
+      <button type="button" id="tab2d" aria-pressed="false">Sinótico 2D</button>
+      <span class="sep"></span>
+      <span class="eyebrow" id="camLbl">Câmera</span>
+      <button type="button" data-cam="geral">Geral</button>
+      <button type="button" data-cam="tanques">Tanques 01 e 02</button>
+      <button type="button" data-cam="lodo">Tanque de lodo</button>
+      <button type="button" data-cam="cacambas">Caçambas</button>
+      <label class="chk" style="align-items:center"><input type="checkbox" id="showLabels" checked> Rótulos</label>
+    </div>
+    <div class="stage">
+      <div id="view3d"><div id="labels"></div><div class="hint">Arraste para girar · roda do mouse para aproximar · botão direito para mover</div></div>
+      <div id="view2d" hidden><svg id="svg" viewBox="0 0 1100 560" role="img" aria-label="Fluxograma do processo O2 Eco"></svg></div>
+    </div>
+  </section>
+
+  <div class="grid3">
+    <section class="card" aria-labelledby="hA">
+      <h2 id="hA">Spark A <span class="eyebrow">painel 01</span><span class="pill" id="pillA">—</span></h2>
+      <div class="rows" id="stA"></div>
+    </section>
+    <section class="card" aria-labelledby="hB">
+      <h2 id="hB">Spark B <span class="eyebrow">painel 02</span><span class="pill" id="pillB">—</span></h2>
+      <div class="rows" id="stB"></div>
+      <div class="eyebrow">Permissivos de B-02 e B-LODO</div>
+      <div class="perm" id="perm"></div>
+    </section>
+    <section class="card alarms" aria-labelledby="hAl">
+      <h2 id="hAl">Alarmes <button id="btnAck" type="button" style="margin-left:auto">Reconhecer</button></h2>
+      <ul id="alarmList"></ul>
+      <div class="eyebrow">Eventos</div>
+      <div class="log" id="log" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="card" aria-labelledby="hSp">
+      <h2 id="hSp">Setpoints</h2>
+      <div class="spgroups" id="spForm"></div>
+    </section>
+    <section class="card" aria-labelledby="hVp">
+      <h2 id="hVp">Pontos virtuais de simulação</h2>
+      <div class="eyebrow">Níveis: arraste para injetar um valor</div>
+      <div class="rows" id="vpLevels"></div>
+      <div class="eyebrow">Forçar entradas digitais</div>
+      <div class="forces" id="vpForces"></div>
+      <div class="eyebrow">Sensor ultrassônico LT-LODO</div>
+      <div class="forces">
+        <label for="ltMode">Modo do sinal</label>
+        <select id="ltMode">
+          <option value="auto">Automático (nível simulado)</option>
+          <option value="fixed">Valor fixo em mA</option>
+          <option value="fail">Falha: 2,0 mA (fio rompido)</option>
+        </select>
+        <label for="ltMa">Valor fixo (mA)</label>
+        <input type="number" id="ltMa" min="0" max="24" step="0.1" value="12">
+      </div>
+      <div class="eyebrow">Comunicação e campo</div>
+      <label class="chk"><input type="checkbox" id="feedAvail" checked> Afluente disponível na sucção da B-ALIM</label>
+      <label class="chk"><input type="checkbox" id="commFail"> Falha de comunicação Modbus RS-485 entre Spark A e Spark B</label>
+      <div class="btnrow">
+        <button type="button" id="swap1">Trocar caçamba 01</button>
+        <button type="button" id="swap2">Trocar caçamba 02</button>
+        <button type="button" id="drain">Esgotar 1 m³ do tanque de lodo (manual)</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="hIo">
+    <h2 id="hIo">Lista de pontos físicos <span class="pill" id="forcedCount">0 forçamentos</span></h2>
+    <div class="tbl"><table>
+      <thead><tr><th>#</th><th>Tag</th><th>Spark</th><th>Tipo</th><th>Borne</th><th>Valor</th><th>Significado</th></tr></thead>
+      <tbody id="ioBody"></tbody>
+    </table></div>
+    <p class="note">Lógica conforme a matriz da Rev. 02, mais a B-ALIM e o nível de transbordamento LSHH-LODO, que é calculado a partir do LT-LODO. As propostas ainda a confirmar (B-01 bloqueada durante o preparo e espera da mistura do T02) podem ser ligadas e desligadas nos setpoints. Bornes marcados com * a confirmar no esquema.</p>
+  </section>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ===================== Setpoints ===================== */
+const SP_DEF = [
+  {g:"Tanque 01", items:[
+    {k:"hMax1", l:"LS-01 · nível máximo", u:"%", v:95, min:10, max:100},
+    {k:"hDem1", l:"LS-01 · demanda (1/3 H)", u:"%", v:33, min:5, max:95},
+    {k:"lsl1",  l:"LSL-01 · nível baixo", u:"%", v:10, min:1, max:60},
+    {k:"tMix1", l:"Mistura após enchimento", u:"min", v:10, min:0, max:120},
+  ]},
+  {g:"Tanque 02", items:[
+    {k:"hMax2", l:"LS-02 · nível máximo", u:"%", v:95, min:10, max:100},
+    {k:"hDem2", l:"LS-02 · demanda", u:"%", v:60, min:5, max:95},
+    {k:"lsl2",  l:"LSL-02 · nível baixo", u:"%", v:10, min:1, max:60},
+    {k:"tMix2", l:"Mistura após transferência", u:"min", v:5, min:0, max:120},
+  ]},
+  {g:"Tanque de lodo (LT-LODO, ultrassônico)", items:[
+    {k:"ltRange",     l:"Faixa do sensor (20 mA)", u:"m", v:3.0, min:0.5, max:20, step:0.1},
+    {k:"lodoHH",      l:"LSHH-LODO · transbordamento", u:"m", v:2.7, min:0.1, max:20, step:0.05, hh:true},
+    {k:"lodoHHreset", l:"Religa a B-ALIM abaixo de", u:"m", v:2.3, min:0, max:20, step:0.05},
+    {k:"lodoStart",   l:"Nível de partida da dosagem", u:"m", v:0.8, min:0, max:20, step:0.05},
+    {k:"lodoMin",     l:"Nível mínimo (parada)", u:"m", v:0.4, min:0, max:20, step:0.05},
+  ]},
+  {g:"Sequência das caçambas", items:[
+    {k:"tStart",   l:"Válvula abre → bombas ligam", u:"s", v:3, min:0, max:60},
+    {k:"tOverlap", l:"Sobreposição na troca", u:"s", v:2, min:0, max:60},
+    {k:"tClose",   l:"Bombas param → válvula fecha", u:"s", v:3, min:0, max:60},
+    {k:"cacTrip",  l:"LSH caçamba atua em", u:"%", v:95, min:50, max:100},
+  ]},
+  {g:"Proteções de reserva (tempo máx.)", items:[
+    {k:"tMaxFill",   l:"Enchimento do T01", u:"min", v:40, min:1, max:600},
+    {k:"tMaxTransf", l:"Transferência B-01", u:"min", v:40, min:1, max:600},
+    {k:"tMaxDos",    l:"Dosagem por ciclo", u:"min", v:180, min:1, max:1440},
+  ]},
+  {g:"Processo simulado (vazões e volumes)", items:[
+    {k:"qAg",    l:"Água pela XV-AG", u:"m³/h", v:3.0, min:0, max:50, step:0.1},
+    {k:"qB01",   l:"Vazão da B-01", u:"m³/h", v:2.0, min:0, max:50, step:0.1},
+    {k:"qB02",   l:"Vazão da B-02", u:"m³/h", v:0.3, min:0, max:20, step:0.05},
+    {k:"qLodo",  l:"Vazão da B-LODO", u:"m³/h", v:6.0, min:0, max:100, step:0.1},
+    {k:"qAlim",  l:"Vazão da B-ALIM (afluente)", u:"m³/h", v:4.0, min:0, max:100, step:0.1},
+    {k:"cap1",   l:"Volume do T01", u:"m³", v:1.0, min:0.05, max:100, step:0.05},
+    {k:"cap2",   l:"Volume do T02", u:"m³", v:1.0, min:0.05, max:100, step:0.05},
+    {k:"capL",   l:"Volume do tanque de lodo", u:"m³", v:5.0, min:0.1, max:500, step:0.1},
+    {k:"hL",     l:"Altura do tanque de lodo", u:"m", v:3.0, min:0.2, max:20, step:0.1},
+    {k:"capC",   l:"Volume de cada caçamba", u:"m³", v:5.0, min:0.1, max:100, step:0.1},
+  ]},
+];
+const OPT_DEF = [
+  {k:"blockB01", l:"Bloquear B-01 durante enchimento e mistura do T01 (decisão 1)", v:true},
+  {k:"waitMix2", l:"B-02 aguarda a mistura do T02 após cada transferência (decisão 2)", v:true},
+];
+const SP_KEY = "o2eco-sim-sp-v2";
+const sp = {};
+SP_DEF.forEach(g => g.items.forEach(i => sp[i.k] = i.v));
+OPT_DEF.forEach(o => sp[o.k] = o.v);
+try { Object.assign(sp, JSON.parse(localStorage.getItem(SP_KEY) || "{}")); } catch (e) {}
+const saveSp = () => { try { localStorage.setItem(SP_KEY, JSON.stringify(sp)); } catch (e) {} };
+
+/* ===================== Estado ===================== */
+let S, running = true, logItems = [], logDirty = true;
+const alarms = new Map();
+
+function initState(){
+  S = {
+    t: 0,
+    lv: {t1:0.70, t2:0.70, tl:0.60, c1:0.20, c2:0.00},
+    frz: {t1:false, t2:false, tl:false, c1:false, c2:false},
+    ls01Full: true, ls02Full: false,
+    force: {LS01:"auto", LSL01:"auto", LS02:"auto", LSL02A:"auto", LSHC01:"auto", LSHC02:"auto", LSL02B:"auto"},
+    ltMode: "auto", ltMa: 12, comm: true, feedAvail: true,
+    DI:{}, AI:{lt:4},
+    A: {fill:false, fillT:0, mix1:0, pronto:true, b01:false, b01T:0, b01Block:null, mix2:0, disp:true},
+    B: {step:0, phase:"", t:0, dosT:0, pumps:false, xv1:false, xv2:false, xa:false, lodoOk:true, dispRx:true, perm:{},
+        lvl:0, hh:false, hhAcked:false, feedLock:false, feed:false, feedWhy:""},
+    out: {xvag:false, mpol:false, mx01:false, b01:false, mx02:false, b02:false, blodo:false, xv1:false, xv2:false, xa:false, balim:false, xalodo:false},
+    flow: {},
+  };
+  alarms.clear();
+  logItems = [];
+}
+
+/* ===================== Utilitários ===================== */
+const $ = id => document.getElementById(id);
+const pad = n => String(Math.floor(n)).padStart(2,"0");
+const hms = s => `${pad(s/3600)}:${pad((s%3600)/60)}:${pad(s%60)}`;
+const mmss = s => `${pad(s/60)}:${pad(s%60)}`;
+const fmt = (v,d=1) => v.toLocaleString("pt-BR",{minimumFractionDigits:d, maximumFractionDigits:d});
+const blinkOn = () => Math.floor(performance.now()/420) % 2 === 0;
+
+function log(sev, msg){
+  logItems.unshift({t:S.t, sev, msg});
+  if (logItems.length > 250) logItems.length = 250;
+  logDirty = true;
+}
+function setAlarm(key, active, msg, latch=false){
+  if (active){
+    if (!alarms.has(key)){ alarms.set(key, {msg, latch}); log("a", msg); }
+  } else if (alarms.has(key) && !alarms.get(key).latch){
+    alarms.delete(key); log("i", "Normalizado: " + msg.split(":")[0]);
+  }
+}
+const latched = key => alarms.has(key);
+
+/* ===================== Sensores ===================== */
+function readSensors(){
+  const L = S.lv, f = S.force, raw = {};
+  if (L.t1 >= sp.hMax1/100) S.ls01Full = true; else if (L.t1 < sp.hDem1/100) S.ls01Full = false;
+  if (L.t2 >= sp.hMax2/100) S.ls02Full = true; else if (L.t2 < sp.hDem2/100) S.ls02Full = false;
+  raw.LS01 = S.ls01Full ? 1 : 0;
+  raw.LSL01 = L.t1 > sp.lsl1/100 ? 1 : 0;
+  raw.LS02 = S.ls02Full ? 1 : 0;
+  const lsl2 = L.t2 > sp.lsl2/100 ? 1 : 0;
+  raw.LSL02A = lsl2; raw.LSL02B = lsl2;
+  raw.LSHC01 = L.c1 < sp.cacTrip/100 ? 1 : 0;
+  raw.LSHC02 = L.c2 < sp.cacTrip/100 ? 1 : 0;
+  for (const k in raw) S.DI[k] = f[k] === "auto" ? raw[k] : +f[k];
+  const lvlM = L.tl * sp.hL;
+  let ma = 4 + 16 * Math.min(1.0125, lvlM / sp.ltRange);
+  if (S.ltMode === "fixed") ma = S.ltMa;
+  if (S.ltMode === "fail") ma = 2.0;
+  S.AI.lt = ma;
+}
+
+/* ===================== Spark A ===================== */
+function sparkA(dt){
+  const A = S.A, D = S.DI, o = S.out;
+  if (!A.fill && D.LS01 === 0 && !latched("AL_FILL")){
+    A.fill = true; A.fillT = 0; A.pronto = false; A.mix1 = 0;
+    log("i", "Spark A · LS-01 pede preparo: abre XV-AG e liga M-POL");
+  }
+  if (A.fill){
+    A.fillT += dt;
+    if (D.LS01 === 1){
+      A.fill = false; A.mix1 = sp.tMix1*60;
+      if (A.mix1 <= 0) A.pronto = true;
+      log("i", `Spark A · T01 no máximo: fecha XV-AG, desliga M-POL, mistura de ${fmt(sp.tMix1,0)} min`);
+    } else if (A.fillT > sp.tMaxFill*60){
+      A.fill = false;
+      setAlarm("AL_FILL", true, "Tempo máximo de enchimento do T01: XV-AG e M-POL desligados", true);
+    }
+  }
+  if (A.mix1 > 0){ A.mix1 -= dt; if (A.mix1 <= 0){ A.mix1 = 0; A.pronto = true; log("i","Spark A · solução do T01 pronta"); } }
+  o.xvag = A.fill; o.mpol = A.fill;
+  o.mx01 = D.LSL01 === 1;
+
+  let block = null;
+  if (D.LSL01 !== 1) block = "LSL-01 descoberto (T01 baixo)";
+  else if (latched("AL_B01")) block = "alarme de tempo máximo da B-01";
+  else if (sp.blockB01 && A.fill) block = "T01 em enchimento";
+  else if (sp.blockB01 && !A.pronto) block = "T01 em mistura";
+  A.b01Block = block;
+  if (A.b01){
+    A.b01T += dt;
+    let stop = null;
+    if (D.LS02 === 1) stop = "T02 no máximo (LS-02)";
+    else if (block) stop = block;
+    else if (A.b01T > sp.tMaxTransf*60){
+      stop = "tempo máximo";
+      setAlarm("AL_B01", true, "Tempo máximo de transferência da B-01: bomba desligada", true);
+    }
+    if (stop){
+      A.b01 = false;
+      log("i", "Spark A · B-01 desliga: " + stop);
+      if (sp.waitMix2) A.mix2 = sp.tMix2*60;
+    }
+  } else if (D.LS02 === 0 && !block){
+    A.b01 = true; A.b01T = 0;
+    log("i", "Spark A · LS-02 pede transferência: liga B-01");
+  }
+  o.b01 = A.b01;
+  if (A.mix2 > 0){ A.mix2 -= dt; if (A.mix2 <= 0){ A.mix2 = 0; log("i","Spark A · mistura do T02 concluída"); } }
+  A.disp = sp.waitMix2 ? (!A.b01 && A.mix2 <= 0) : true;
+  o.mx02 = D.LSL02A === 1;
+}
+
+/* ===================== Spark B ===================== */
+const STEP = {0:"Repouso", 5:"Dosagem na caçamba 01", 6:"Dosagem na caçamba 02", 7:"Fim de processo"};
+const PHASE = {abrindo:"abrindo válvula", dosando:"dosando", troca:"trocando de caçamba", fechando:"fechando válvula",
+  pausa_fechando:"pausa · fechando válvula", pausa:"pausa · aguardando permissivos"};
+
+function goStep(n, why){
+  const B = S.B; B.step = n; B.t = 0;
+  log("i", `Spark B · etapa ${n} (${STEP[n]})${why ? ": " + why : ""}`);
+}
+
+function sparkB(dt){
+  const B = S.B, D = S.DI;
+  const ma = S.AI.lt, fault = ma < 3.6;
+  const lvl = (ma - 4) / 16 * sp.ltRange;
+  B.lvl = lvl;
+  setAlarm("AL_LT", fault, "Falha do LT-LODO: sinal abaixo de 3,6 mA, B-ALIM e dosagem bloqueadas");
+  if (fault) B.lodoOk = false;
+  else if (lvl >= sp.lodoStart) B.lodoOk = true;
+  else if (lvl < sp.lodoMin) B.lodoOk = false;
+
+  // LSHH-LODO: terceiro nível do ultrassônico (transbordamento)
+  B.hh = !fault && lvl >= sp.lodoHH;
+  if (B.hh){
+    if (!B.feedLock) log("a", `Spark B · LSHH-LODO atuado (${fmt(lvl,2)} m): desliga B-ALIM, para a dosagem e liga XA-LODO`);
+    B.feedLock = true;
+    if (!B.hhAcked) setAlarm("AL_HH", true, "Transbordamento do tanque de lodo (LSHH-LODO): B-ALIM desligada e dosagem parada", true);
+  } else B.hhAcked = false;
+  if (B.feedLock && !fault && !B.hh && lvl < sp.lodoHHreset && !latched("AL_HH")){
+    B.feedLock = false;
+    log("i", `Spark B · nível abaixo de ${fmt(sp.lodoHHreset,2)} m: B-ALIM liberada`);
+  }
+  B.feedWhy = fault ? "falha do LT-LODO"
+    : B.feedLock ? (latched("AL_HH") ? "transbordamento, reconhecer o alarme" : `transbordamento, religa abaixo de ${fmt(sp.lodoHHreset,2)} m`)
+    : !S.feedAvail ? "afluente indisponível" : "";
+  const feed = !B.feedWhy;
+  if (feed !== B.feed) log(feed ? "i" : "w", feed ? "Spark B · B-ALIM liga" : "Spark B · B-ALIM desliga: " + B.feedWhy);
+  B.feed = feed;
+
+  setAlarm("AL_COMM", !S.comm, "Falha de comunicação Modbus entre Spark A e Spark B");
+  if (S.comm) B.dispRx = S.A.disp;
+
+  const P = B.perm = {
+    lodo: B.lodoOk,
+    hh: !latched("AL_HH") && !B.hh,
+    t02: D.LSL02B === 1,
+    disp: B.dispRx,
+    alarm: !latched("AL_DOS"),
+  };
+  const permit = P.lodo && P.hh && P.t02 && P.disp && P.alarm;
+  const why = [!P.lodo && "sem lodo", !P.hh && "transbordamento do tanque de lodo", !P.t02 && "T02 baixo",
+               !P.disp && "solução não disponível", !P.alarm && "alarme de dosagem"].filter(Boolean).join(", ");
+
+  B.t += dt;
+  const c1 = D.LSHC01, c2 = D.LSHC02;
+
+  switch (B.step){
+    case 0:
+      B.pumps = false; B.xv1 = false; B.xv2 = false; B.xa = false;
+      if (c1 === 0 && c2 === 0) { goStep(7, "caçambas 01 e 02 cheias"); break; }
+      if (permit && S.comm){
+        B.dosT = 0; B.phase = "abrindo";
+        if (c1 === 1){ B.xv1 = true; goStep(5); } else { B.xv2 = true; goStep(6, "caçamba 01 cheia"); }
+      }
+      break;
+    case 5: case 6: {
+      const n = B.step === 5 ? 1 : 2, key = "xv" + n, cn = n === 1 ? c1 : c2;
+      if (B.pumps) B.dosT += dt;
+      if (B.pumps && B.dosT > sp.tMaxDos*60 && !latched("AL_DOS")){
+        setAlarm("AL_DOS", true, "Tempo máximo de dosagem: B-02 e B-LODO desligadas", true);
+        B.pumps = false; B.phase = "fechando"; B.t = 0;
+      }
+      switch (B.phase){
+        case "abrindo":
+          B[key] = true; B.pumps = false;
+          if (!permit){ B[key] = false; B.phase = "pausa"; log("w", "Spark B · dosagem em pausa: " + why); }
+          else if (B.t >= sp.tStart){ B.pumps = true; B.phase = "dosando"; log("i", "Spark B · B-02 e B-LODO ligadas"); }
+          break;
+        case "dosando":
+          B.pumps = true; B[key] = true;
+          if (!permit){ B.pumps = false; B.phase = "pausa_fechando"; B.t = 0; log("w", "Spark B · dosagem em pausa: " + why); }
+          else if (cn === 0){
+            if (n === 1){ B.xv2 = true; B.phase = "troca"; B.t = 0; log("i", "Spark B · caçamba 01 cheia: abre XV-C02"); }
+            else { B.pumps = false; B.phase = "fechando"; B.t = 0; log("i", "Spark B · caçamba 02 cheia: desliga B-02 e B-LODO"); }
+          }
+          break;
+        case "troca":
+          B.pumps = permit; B.xv1 = true; B.xv2 = true;
+          if (B.t >= sp.tOverlap){
+            B.xv1 = false; B.step = 6; B.phase = permit ? "dosando" : "pausa_fechando"; B.t = 0;
+            log("i", "Spark B · fecha XV-C01, etapa 6 (dosagem na caçamba 02)");
+          }
+          break;
+        case "fechando":
+          B.pumps = false;
+          if (B.t >= sp.tClose){ B.xv1 = false; B.xv2 = false; goStep(7); }
+          break;
+        case "pausa_fechando":
+          B.pumps = false;
+          if (B.t >= sp.tClose){ B[key] = false; B.phase = "pausa"; }
+          break;
+        case "pausa":
+          B.pumps = false; B[key] = false;
+          if (latched("AL_DOS")){ goStep(7, "alarme de dosagem"); break; }
+          if (permit){ B[key] = true; B.phase = "abrindo"; B.t = 0; log("i", "Spark B · permissivos restabelecidos: retoma a dosagem"); }
+          break;
+      }
+      break;
+    }
+    case 7:
+      B.pumps = false; B.xv1 = false; B.xv2 = false; B.xa = true;
+      if (c1 === 1 && c2 === 1 && !latched("AL_DOS")){ B.xa = false; goStep(0, "caçambas trocadas"); }
+      break;
+  }
+  const pumpsOk = B.pumps && (B.xv1 || B.xv2);
+  const o = S.out;
+  o.b02 = pumpsOk; o.blodo = pumpsOk; o.xv1 = B.xv1; o.xv2 = B.xv2; o.xa = B.xa;
+  o.balim = B.feed;
+  o.xalodo = latched("AL_HH") || B.hh;
+}
+
+/* ===================== Processo físico ===================== */
+function physics(dt){
+  const h = dt/3600, L = S.lv, o = S.out, F = S.frz, fl = S.flow = {};
+  const in1 = o.xvag ? sp.qAg*h : 0;
+  const out1 = o.b01 ? Math.min(sp.qB01*h, L.t1*sp.cap1) : 0;
+  if (!F.t1) L.t1 += (in1 - out1)/sp.cap1;
+  const out2 = o.b02 ? Math.min(sp.qB02*h, L.t2*sp.cap2) : 0;
+  if (!F.t2) L.t2 += (out1 - out2)/sp.cap2;
+  const inL = o.balim && S.feedAvail ? sp.qAlim*h : 0;
+  const outL = o.blodo ? Math.min(sp.qLodo*h, L.tl*sp.capL) : 0;
+  if (!F.tl) L.tl += (inL - outL)/sp.capL;
+  const tot = out2 + outL, n = (o.xv1?1:0) + (o.xv2?1:0);
+  if (n){ if (o.xv1 && !F.c1) L.c1 += tot/n/sp.capC; if (o.xv2 && !F.c2) L.c2 += tot/n/sp.capC; }
+  fl.in1 = in1>0; fl.out1 = out1>0; fl.out2 = out2>0; fl.outL = outL>0; fl.inL = inL>0;
+
+  const lim = (k, name) => {
+    setAlarm("OVF_"+k, L[k] >= 1, `Transbordo físico: ${name} acima de 100 %`);
+    L[k] = Math.max(0, Math.min(1, L[k]));
+  };
+  lim("t1","tanque 01"); lim("t2","tanque 02"); lim("tl","tanque de lodo"); lim("c1","caçamba 01"); lim("c2","caçamba 02");
+  setAlarm("DRY_B01", o.b01 && L.t1 <= 0.001, "B-01 funcionando a seco");
+  setAlarm("DRY_B02", o.b02 && L.t2 <= 0.001, "B-02 funcionando a seco");
+  setAlarm("DRY_BL",  o.blodo && L.tl <= 0.001, "B-LODO funcionando a seco");
+  setAlarm("DRY_BA",  o.balim && !S.feedAvail, "B-ALIM ligada sem afluente na sucção");
+  setAlarm("DRY_MX1", o.mx01 && L.t1 <= 0.03, "MX-01 ligado com o tanque 01 vazio");
+}
+
+function step(dtTotal){
+  const n = Math.max(1, Math.ceil(dtTotal / 0.5));
+  const dt = dtTotal / n;
+  for (let i = 0; i < n; i++){
+    readSensors(); sparkA(dt); sparkB(dt); physics(dt);
+    S.t += dt;
+  }
+}
+
+/* ===================== Vista 3D ===================== */
+const G = {ok:false};
+
+function init3D(){
+  const host = $("view3d");
+  if (!window.THREE || !THREE.OrbitControls) return false;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true}); } catch (e) { return false; }
+  if (!renderer.getContext()) return false;
+  const T = THREE;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFSoftShadowMap;
+  renderer.outputEncoding = T.sRGBEncoding;
+  host.insertBefore(renderer.domElement, host.firstChild);
+
+  const scene = new T.Scene();
+  const camera = new T.PerspectiveCamera(38, 1, 0.1, 200);
+  const controls = new T.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI * 0.47; controls.minDistance = 4; controls.maxDistance = 45;
+
+  scene.add(new T.HemisphereLight(0xf4f7fb, 0x7d7a73, 0.65));
+  const sun = new T.DirectionalLight(0xffffff, 0.95);
+  sun.position.set(9, 16, 10); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, {left:-19, right:19, top:13, bottom:-13, near:1, far:60});
+  sun.shadow.bias = -0.0005;
+  scene.add(sun);
+
+  const M = (o) => new T.MeshStandardMaterial(o);
+  const MAT = {
+    floor: M({color:0xa7a49c, roughness:0.95}),
+    curb: M({color:0xbab6ad, roughness:0.9}),
+    steel: M({color:0xb9c0c6, metalness:0.65, roughness:0.32}),
+    steelDark: M({color:0x5d666e, metalness:0.5, roughness:0.45}),
+    hdpe: M({color:0xeef0ea, roughness:0.35, transparent:true, opacity:0.32, side:T.DoubleSide, depthWrite:false}),
+    sludgeShell: M({color:0x8d969d, metalness:0.35, roughness:0.5, transparent:true, opacity:0.42, side:T.DoubleSide, depthWrite:false}),
+    sol: M({color:0x8fb6cf, roughness:0.15, metalness:0.05, transparent:true, opacity:0.88}),
+    sludge: M({color:0x5f4e3a, roughness:0.85}),
+    motor: M({color:0x2f5672, metalness:0.45, roughness:0.4}),
+    pump: M({color:0x38434d, metalness:0.5, roughness:0.45}),
+    pWater: M({color:0x3f8a52, roughness:0.5}),
+    pPoly: M({color:0xd77a28, roughness:0.5}),
+    pSludge: M({color:0x4a4038, roughness:0.6}),
+    valve: M({color:0x252c33, metalness:0.5, roughness:0.4}),
+    actuator: M({color:0xc9cdd1, metalness:0.3, roughness:0.5}),
+    cacamba: M({color:0xd3832a, metalness:0.25, roughness:0.6}),
+    cacDark: M({color:0x8e5a1f, metalness:0.25, roughness:0.7}),
+    panel: M({color:0xdadde0, metalness:0.25, roughness:0.55}),
+    panelDark: M({color:0x9aa1a7, metalness:0.3, roughness:0.5}),
+    beam: M({color:0xe2b528, metalness:0.3, roughness:0.55}),
+    cone: new T.MeshBasicMaterial({color:0x6fb3d2, transparent:true, opacity:0.16, depthWrite:false, side:T.DoubleSide}),
+    flowW: new T.MeshBasicMaterial({color:0x9df2b2}),
+    flowP: new T.MeshBasicMaterial({color:0xffc48a}),
+    flowS: new T.MeshBasicMaterial({color:0xc9a27a}),
+  };
+  const led = () => M({color:0x30363b, emissive:0x000000, roughness:0.4});
+
+  function add(geo, mat, x=0, y=0, z=0, parent=scene, shadow=true){
+    const m = new T.Mesh(geo, mat); m.position.set(x,y,z);
+    if (shadow){ m.castShadow = true; m.receiveShadow = true; }
+    parent.add(m); return m;
+  }
+  const V = (x,y,z) => new T.Vector3(x,y,z);
+
+  // piso e bacia de contenção dos tanques de polímero
+  const floor = add(new T.PlaneGeometry(36, 20), MAT.floor, 0, 0, 0);
+  floor.rotation.x = -Math.PI/2; floor.castShadow = false;
+  const grid = new T.GridHelper(36, 18, 0x84817a, 0x93908a); grid.position.y = 0.002;
+  grid.material.transparent = true; grid.material.opacity = 0.35; scene.add(grid);
+  [[-6.95,-3.75,6.6,0.12],[-6.95,-0.25,6.6,0.12],[-10.2,-2,0.12,3.6],[-3.7,-2,0.12,3.6]].forEach(([x,z,w,d]) =>
+    add(new T.BoxGeometry(w,0.3,d), MAT.curb, x, 0.15, z));
+
+  // ---------- tanques ----------
+  function tank(cx, cz, r, h, shell, liqMat, baseY){
+    const g = new T.Group(); g.position.set(cx, 0, cz); scene.add(g);
+    add(new T.CylinderGeometry(r*1.03, r*1.06, baseY, 40), MAT.steelDark, 0, baseY/2, 0, g);
+    const sh = add(new T.CylinderGeometry(r, r, h, 48, 1, true), shell, 0, baseY + h/2, 0, g, false);
+    sh.renderOrder = 2;
+    const rim = add(new T.TorusGeometry(r, 0.03, 8, 48), MAT.steel, 0, baseY + h, 0, g);
+    rim.rotation.x = Math.PI/2;
+    add(new T.CylinderGeometry(r, r, 0.02, 40), MAT.steelDark, 0, baseY + 0.01, 0, g);
+    const liq = add(new T.CylinderGeometry(r*0.975, r*0.975, 1, 40), liqMat, 0, baseY, 0, g, false);
+    liq.receiveShadow = true;
+    return {g, liq, r, h, baseY, cx, cz};
+  }
+  function setLevel(t, f){
+    const hh = Math.max(0.004, Math.min(1, f) * t.h);
+    t.liq.scale.y = hh; t.liq.position.y = t.baseY + hh/2;
+  }
+  function ring(t, color, op=0.9, thick=0.018){
+    const m = new T.Mesh(new T.TorusGeometry(t.r*1.012, thick, 6, 64), new T.MeshBasicMaterial({color, transparent:true, opacity:op}));
+    m.rotation.x = Math.PI/2; t.g.add(m); m.userData.t = t; return m;
+  }
+  function placeRing(m, frac){ const t = m.userData.t; m.position.y = t.baseY + t.h*Math.max(0, Math.min(1, frac)); }
+
+  const T1 = tank(-8.3, -2, 0.65, 1.8, MAT.hdpe, MAT.sol, 0.14);
+  const T2 = tank(-5.6, -2, 0.65, 1.8, MAT.hdpe, MAT.sol, 0.14);
+  const TL = tank(1.0, -2.6, 1.6, 3.2, MAT.sludgeShell, MAT.sludge, 0.2);
+  const R = {
+    hMax1: ring(T1, 0x1e2226), hDem1: ring(T1, 0x2c6a88), lsl1: ring(T1, 0x1e2226),
+    hMax2: ring(T2, 0x1e2226), hDem2: ring(T2, 0x2c6a88), lsl2: ring(T2, 0x1e2226),
+    lodoHH: ring(TL, 0xd32f2f, 1, 0.04), lodoStart: ring(TL, 0x2c6a88), lodoMin: ring(TL, 0x1e2226),
+  };
+
+  // ---------- motores, bombas, misturadores ----------
+  function statusLed(parent, x, y, z){ return add(new T.SphereGeometry(0.045, 12, 8), led(), x, y, z, parent, false); }
+  function pump(x, z, rotY){
+    const g = new T.Group(); g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
+    add(new T.BoxGeometry(0.95, 0.08, 0.42), MAT.steelDark, 0.1, 0.04, 0, g);
+    const vol = add(new T.CylinderGeometry(0.2, 0.2, 0.16, 28), MAT.pump, -0.22, 0.3, 0, g); vol.rotation.x = Math.PI/2;
+    add(new T.CylinderGeometry(0.07, 0.07, 0.2, 16), MAT.pump, -0.22, 0.52, 0, g);
+    const suc = add(new T.CylinderGeometry(0.07, 0.07, 0.18, 16), MAT.pump, -0.4, 0.3, 0, g); suc.rotation.z = Math.PI/2;
+    const mot = add(new T.CylinderGeometry(0.15, 0.15, 0.45, 24), MAT.motor, 0.17, 0.27, 0, g); mot.rotation.z = Math.PI/2;
+    for (let i = 0; i < 8; i++) add(new T.BoxGeometry(0.4, 0.02, 0.02), MAT.motor, 0.17, 0.27 + 0.15*Math.cos(i*Math.PI/4), 0.15*Math.sin(i*Math.PI/4), g, false);
+    const fan = add(new T.CylinderGeometry(0.13, 0.13, 0.06, 20), MAT.steelDark, 0.43, 0.27, 0, g); fan.rotation.z = Math.PI/2;
+    const blade = add(new T.BoxGeometry(0.01, 0.2, 0.03), MAT.steel, 0.465, 0.27, 0, g, false);
+    add(new T.BoxGeometry(0.12, 0.08, 0.1), MAT.motor, 0.12, 0.45, 0, g);
+    const l = statusLed(g, 0.12, 0.52, 0);
+    return {g, led:l, blade};
+  }
+  function mixer(t){
+    const top = t.baseY + t.h;
+    add(new T.BoxGeometry(t.r*2.25, 0.07, 0.14), MAT.beam, t.cx, top + 0.04, t.cz);
+    add(new T.CylinderGeometry(0.13, 0.13, 0.36, 24), MAT.motor, t.cx, top + 0.26, t.cz);
+    add(new T.CylinderGeometry(0.15, 0.15, 0.05, 24), MAT.steelDark, t.cx, top + 0.1, t.cz);
+    const l = statusLed(scene, t.cx + 0.14, top + 0.36, t.cz);
+    const shaft = new T.Group(); shaft.position.set(t.cx, 0, t.cz); scene.add(shaft);
+    add(new T.CylinderGeometry(0.018, 0.018, t.h - 0.25, 8), MAT.steel, 0, t.baseY + 0.25 + (t.h - 0.25)/2, 0, shaft, false);
+    for (let i = 0; i < 3; i++){
+      const a = i*Math.PI*2/3;
+      const b = add(new T.BoxGeometry(0.3, 0.02, 0.09), MAT.steel, 0.15*Math.cos(a), t.baseY + 0.3, -0.15*Math.sin(a), shaft, false);
+      b.rotation.y = a; b.rotation.x = 0.35;
+    }
+    return {led:l, shaft};
+  }
+
+  // ---------- tubulação com partículas de fluxo ----------
+  const pipes = {};
+  function pipe(id, pts, r, mat, flowMat){
+    const P = pts.map(p => V(...p));
+    const lens = [0];
+    for (let i = 1; i < P.length; i++){
+      const a = P[i-1], b = P[i], len = a.distanceTo(b);
+      lens.push(lens[i-1] + len);
+      const m = add(new T.CylinderGeometry(r, r, len, 14), mat, (a.x+b.x)/2, (a.y+b.y)/2, (a.z+b.z)/2);
+      m.quaternion.setFromUnitVectors(V(0,1,0), b.clone().sub(a).normalize());
+      if (i < P.length - 1) add(new T.SphereGeometry(r*1.18, 14, 10), mat, b.x, b.y, b.z);
+    }
+    const total = lens[lens.length-1];
+    const n = Math.max(3, Math.round(total / 0.45));
+    const parts = [], pg = new T.SphereGeometry(r*1.32, 10, 8);
+    for (let i = 0; i < n; i++){ const s = add(pg, flowMat, 0, 0, 0, scene, false); s.visible = false; parts.push(s); }
+    pipes[id] = {P, lens, total, parts, off:0};
+  }
+  function pointAt(p, d, out){
+    const {P, lens} = p;
+    for (let i = 1; i < P.length; i++){
+      if (d <= lens[i]){ const f = (d - lens[i-1]) / ((lens[i] - lens[i-1]) || 1); return out.copy(P[i-1]).lerp(P[i], f); }
+    }
+    return out.copy(P[P.length-1]);
+  }
+
+  // ---------- válvulas ----------
+  function valve(x, y, z){
+    const g = new T.Group(); g.position.set(x, y, z); scene.add(g);
+    const body = add(new T.SphereGeometry(0.12, 16, 12), MAT.valve, 0, 0, 0, g); body.scale.set(1.3, 1, 1);
+    [-0.14, 0.14].forEach(dx => { const f = add(new T.CylinderGeometry(0.11, 0.11, 0.03, 18), MAT.valve, dx, 0, 0, g); f.rotation.z = Math.PI/2; });
+    add(new T.CylinderGeometry(0.025, 0.025, 0.14, 8), MAT.steel, 0, 0.15, 0, g);
+    add(new T.BoxGeometry(0.2, 0.14, 0.16), MAT.actuator, 0, 0.27, 0, g);
+    const ind = add(new T.CylinderGeometry(0.05, 0.05, 0.025, 16), led(), 0, 0.355, 0, g, false);
+    const flag = add(new T.BoxGeometry(0.14, 0.02, 0.035), M({color:0xf2c230}), 0, 0.37, 0, g, false);
+    return {ind, flag};
+  }
+
+  // ---------- caçambas ----------
+  function cacamba(cx, cz){
+    const L = 3.0, W = 1.8, H = 1.3, g = new T.Group(); g.position.set(cx, 0, cz); scene.add(g);
+    add(new T.BoxGeometry(L - 0.3, 0.08, W), MAT.cacDark, 0, 0.12, 0, g);
+    [-W/2, W/2].forEach(z => add(new T.BoxGeometry(L, H, 0.06), MAT.cacamba, 0, 0.12 + H/2, z, g));
+    [-1, 1].forEach(s => { const e = add(new T.BoxGeometry(0.06, H*1.04, W), MAT.cacamba, s*(L/2 - 0.17), 0.12 + H/2, 0, g); e.rotation.z = s*0.25; });
+    for (let i = -2; i <= 2; i++) [-W/2 - 0.05, W/2 + 0.05].forEach(z => add(new T.BoxGeometry(0.08, H, 0.06), MAT.cacDark, i*0.6, 0.12 + H/2, z, g));
+    [-W/2 + 0.2, W/2 - 0.2].forEach(z => add(new T.BoxGeometry(L + 0.3, 0.1, 0.1), MAT.steelDark, 0, 0.05, z, g));
+    add(new T.BoxGeometry(0.1, 0.9, 0.1), MAT.steelDark, -L/2 - 0.18, 0.55, 0, g);
+    const fill = add(new T.BoxGeometry(L - 0.42, 1, W - 0.1), MAT.sludge, 0, 0.16, 0, g, false);
+    add(new T.BoxGeometry(0.12, 0.12, 0.12), MAT.actuator, L/2 - 0.5, H + 0.2, W/2 - 0.1, g);
+    const sl = statusLed(g, L/2 - 0.5, H + 0.3, W/2 - 0.1);
+    return {g, fill, H, led:sl};
+  }
+  function setCac(c, f){ const h = Math.max(0.004, Math.min(1, f) * (c.H - 0.05)); c.fill.scale.y = h; c.fill.position.y = 0.16 + h/2; }
+
+  // ---------- painéis e sinaleiros ----------
+  function panel(x, z){
+    const g = new T.Group(); g.position.set(x, 0, z); scene.add(g);
+    [-0.35, 0.35].forEach(dx => add(new T.BoxGeometry(0.06, 0.3, 0.3), MAT.steelDark, dx, 0.15, 0, g));
+    add(new T.BoxGeometry(0.9, 1.6, 0.4), MAT.panel, 0, 1.1, 0, g);
+    add(new T.BoxGeometry(0.84, 1.54, 0.01), MAT.panelDark, 0, 1.1, 0.205, g, false);
+    add(new T.BoxGeometry(0.8, 1.5, 0.012), MAT.panel, 0, 1.1, 0.21, g, false);
+    add(new T.BoxGeometry(0.04, 0.18, 0.04), MAT.steelDark, 0.32, 1.1, 0.24, g);
+    add(new T.BoxGeometry(0.5, 0.12, 0.01), MAT.panelDark, 0, 1.68, 0.22, g, false);
+    const pwr = statusLed(g, -0.25, 1.45, 0.24), run = statusLed(g, -0.1, 1.45, 0.24), com = statusLed(g, 0.05, 1.45, 0.24);
+    return {g, pwr, run, com};
+  }
+  const P01 = panel(-8.0, 1.0), P02 = panel(-6.8, 1.0);
+  const conduit = add(new T.CylinderGeometry(0.03, 0.03, 0.3, 8), M({color:0x5d666e}), -7.4, 1.5, 1.0);
+  conduit.rotation.z = Math.PI/2;
+  // torre de sinalização no painel 02: vermelho (XA-LODO) em cima, âmbar (XA-FIM) embaixo
+  add(new T.CylinderGeometry(0.03, 0.03, 0.2, 8), MAT.steelDark, -6.8, 2.0, 1.0);
+  const lampMat = (c) => M({color:c, emissive:0x000000, transparent:true, opacity:0.92, roughness:0.2});
+  const lampFim = add(new T.CylinderGeometry(0.09, 0.09, 0.16, 20), lampMat(0xb98a20), -6.8, 2.18, 1.0, scene, false);
+  const lampLodo = add(new T.CylinderGeometry(0.09, 0.09, 0.16, 20), lampMat(0x9a2a2a), -6.8, 2.35, 1.0, scene, false);
+  add(new T.SphereGeometry(0.09, 16, 8, 0, Math.PI*2, 0, Math.PI/2), MAT.steelDark, -6.8, 2.43, 1.0);
+  const lightFim = new T.PointLight(0xffb300, 0, 4); lightFim.position.set(-6.8, 2.2, 1.3); scene.add(lightFim);
+  const lightLodo = new T.PointLight(0xff2a1a, 0, 5); lightLodo.position.set(-6.8, 2.4, 1.3); scene.add(lightLodo);
+  // sinaleiro XA-LODO repetido em poste junto ao tanque de lodo
+  add(new T.CylinderGeometry(0.04, 0.04, 3.6, 10), MAT.steelDark, -0.9, 1.8, -0.6);
+  const lampLodo2 = add(new T.CylinderGeometry(0.12, 0.12, 0.22, 20), lampMat(0x9a2a2a), -0.9, 3.71, -0.6, scene, false);
+  add(new T.SphereGeometry(0.12, 16, 8, 0, Math.PI*2, 0, Math.PI/2), MAT.steelDark, -0.9, 3.82, -0.6);
+  const lightLodo2 = new T.PointLight(0xff2a1a, 0, 7); lightLodo2.position.set(-0.9, 3.7, -0.3); scene.add(lightLodo2);
+
+  // ---------- montagem da planta ----------
+  pipe("ag", [[-13,2.35,-2.45],[-8.55,2.35,-2.45],[-8.55,1.94,-2.45]], 0.045, MAT.pWater, MAT.flowW);
+  const vAG = valve(-10.8, 2.35, -2.45);
+  const mpolG = new T.Group(); mpolG.position.set(-8.75, 0, -1.55); scene.add(mpolG);
+  [[-0.25,-0.2],[0.25,-0.2],[-0.25,0.2],[0.25,0.2]].forEach(([dx,dz]) => add(new T.BoxGeometry(0.04, 2.2, 0.04), MAT.steelDark, dx, 1.1, dz, mpolG));
+  add(new T.BoxGeometry(0.6, 0.04, 0.5), MAT.steelDark, 0, 2.2, 0, mpolG);
+  add(new T.CylinderGeometry(0.22, 0.08, 0.45, 20), M({color:0xf1f1ee, roughness:0.5}), 0, 2.47, 0, mpolG);
+  const mpolMot = add(new T.CylinderGeometry(0.07, 0.07, 0.2, 16), MAT.motor, 0.2, 2.32, 0, mpolG); mpolMot.rotation.z = Math.PI/2;
+  const mpolLed = statusLed(mpolG, 0.2, 2.44, 0);
+  pipe("pol", [[-8.75,2.22,-1.55],[-8.6,1.94,-1.75]], 0.025, MAT.pPoly, MAT.flowP);
+  const MX1 = mixer(T1), MX2 = mixer(T2);
+  const B01 = pump(-6.95, -0.95, Math.PI);
+  pipe("b01a", [[-7.65,0.3,-2],[-7.3,0.3,-2],[-7.3,0.3,-0.95],[-7.13,0.3,-0.95]], 0.05, MAT.pPoly, MAT.flowP);
+  pipe("b01b", [[-6.73,0.62,-0.95],[-6.73,2.3,-0.95],[-6.73,2.3,-2.3],[-5.85,2.3,-2.3],[-5.85,1.94,-2.3]], 0.05, MAT.pPoly, MAT.flowP);
+  const B02 = pump(-4.3, -0.95, Math.PI);
+  pipe("b02a", [[-4.95,0.3,-2],[-4.65,0.3,-2],[-4.65,0.3,-0.95],[-4.48,0.3,-0.95]], 0.04, MAT.pPoly, MAT.flowP);
+  pipe("b02b", [[-4.08,0.62,-0.95],[-4.08,0.85,-0.95],[-3.3,0.85,-0.95],[-3.3,0.85,1.6],[5.0,0.85,1.6],[5.0,0.85,-0.6],[5.0,0.42,-0.6]], 0.04, MAT.pPoly, MAT.flowP);
+  [-1, 2, 4].forEach(x => add(new T.BoxGeometry(0.06, 0.85, 0.06), MAT.steelDark, x, 0.42, 1.6));
+  const BAL = pump(4.3, -5.0, 0);
+  pipe("alimA", [[8.5,0.3,-6.6],[3.8,0.3,-6.6],[3.8,0.3,-5.0],[3.9,0.3,-5.0]], 0.07, MAT.pSludge, MAT.flowS);
+  pipe("alimB", [[4.08,0.62,-5.0],[4.08,3.75,-5.0],[1.9,3.75,-5.0],[1.9,3.75,-3.3],[1.9,3.2,-3.3]], 0.07, MAT.pSludge, MAT.flowS);
+  add(new T.BoxGeometry(0.08, 3.75, 0.08), MAT.steelDark, 4.35, 1.88, -5.3);
+  const BLO = pump(4.0, -0.6, Math.PI);
+  pipe("bloA", [[2.6,0.3,-2.6],[3.2,0.3,-2.6],[3.2,0.3,-0.6],[3.82,0.3,-0.6]], 0.08, MAT.pSludge, MAT.flowS);
+  pipe("bloB", [[4.22,0.62,-0.6],[4.22,0.42,-0.6],[6.2,0.42,-0.6],[6.2,1.85,-0.6]], 0.08, MAT.pSludge, MAT.flowS);
+  pipe("c1", [[6.2,1.85,-0.6],[6.2,1.85,-3.4],[8.4,1.85,-3.4],[8.4,1.55,-3.4]], 0.08, MAT.pSludge, MAT.flowS);
+  pipe("c2", [[6.2,1.85,-0.6],[6.2,1.85,1.3],[8.4,1.85,1.3],[8.4,1.55,1.3]], 0.08, MAT.pSludge, MAT.flowS);
+  add(new T.SphereGeometry(0.13, 16, 12), MAT.pPoly, 5.0, 0.42, -0.6);
+  [[6.2,-2.2],[6.2,0.4],[8.0,-3.4],[8.0,1.3]].forEach(([x,z]) => add(new T.BoxGeometry(0.08, 1.85, 0.08), MAT.steelDark, x, 0.92, z));
+  const vC1 = valve(7.25, 1.85, -3.4), vC2 = valve(7.25, 1.85, 1.3);
+  const C1 = cacamba(9.6, -3.4), C2 = cacamba(9.6, 1.3);
+  // LT-LODO: transmissor ultrassônico em braço sobre o tanque
+  add(new T.BoxGeometry(1.2, 0.06, 0.08), MAT.steelDark, 2.2, 3.45, -1.7);
+  add(new T.CylinderGeometry(0.1, 0.12, 0.22, 20), MAT.actuator, 1.7, 3.36, -1.7);
+  add(new T.BoxGeometry(0.16, 0.12, 0.12), MAT.actuator, 1.7, 3.53, -1.7);
+  const ltLed = statusLed(scene, 1.79, 3.55, -1.62);
+  const cone = add(new T.ConeGeometry(0.35, 1, 24, 1, true), MAT.cone, 1.7, 0, -1.7, scene, false);
+  cone.renderOrder = 3;
+
+  // ---------- rótulos ----------
+  const labelsEl = $("labels");
+  const labels = {};
+  const MINOR = new Set(["xvag","mpol","mx01","mx02","inj","afl","p01","xv1","xv2"]);
+  function label(id, pos){
+    const d = document.createElement("div"); d.className = "lbl"; labelsEl.appendChild(d);
+    labels[id] = {d, pos: V(...pos), html:"", cls:"lbl", minor: MINOR.has(id)};
+  }
+  function setLabel(id, tag, state, cls){
+    const L = labels[id]; const h = `<b>${tag}</b><span>${state}</span>`;
+    if (L.html !== h){ L.d.innerHTML = h; L.html = h; }
+    const c = "lbl " + (cls||"");
+    if (L.cls !== c){ L.d.className = c; L.cls = c; }
+  }
+  label("t1", [-8.3, 2.75, -2]); label("t2", [-5.6, 2.75, -2]); label("tl", [0.2, 3.9, -2.6]);
+  label("xvag", [-10.8, 2.85, -2.45]); label("mpol", [-8.75, 2.95, -1.55]);
+  label("mx01", [-7.75, 2.4, -2]); label("mx02", [-5.05, 2.4, -2]);
+  label("b01", [-6.95, 0.95, -0.95]); label("b02", [-4.3, 0.95, -0.95]);
+  label("balim", [4.3, 1.0, -5.0]); label("blodo", [4.0, 1.0, -0.6]);
+  label("lt", [2.25, 4.0, -1.7]);
+  label("xv1", [7.25, 2.45, -3.4]); label("xv2", [7.25, 2.45, 1.3]);
+  label("c1", [9.6, 1.95, -3.4]); label("c2", [9.6, 1.95, 1.3]);
+  label("p01", [-8.0, 2.15, 1.0]); label("p02", [-6.55, 2.85, 1.0]);
+  label("xalodo", [-0.9, 4.25, -0.6]);
+  label("inj", [5.0, 1.05, -0.25]);
+  label("afl", [8.3, 0.75, -6.6]);
+
+  const CAMS = {
+    geral:    {p:[0.5, 9.5, 12.5], t:[-0.6, 0.6, -1.6]},
+    tanques:  {p:[-5.4, 4.6, 5.6], t:[-7, 1.1, -1.4]},
+    lodo:     {p:[6.5, 6.5, 6.5], t:[2.2, 1.4, -2.3]},
+    cacambas: {p:[13.5, 5.5, 7.5], t:[8.2, 0.8, -1.0]},
+  };
+  let camAnim = null;
+  function setCam(name, instant){
+    const c = CAMS[name]; if (!c) return;
+    const to = {p:V(...c.p), t:V(...c.t)};
+    if (instant || matchMedia("(prefers-reduced-motion: reduce)").matches){
+      camera.position.copy(to.p); controls.target.copy(to.t); controls.update(); camAnim = null; return;
+    }
+    camAnim = {from:{p:camera.position.clone(), t:controls.target.clone()}, to, k:0};
+  }
+  setCam("geral", true);
+  controls.addEventListener("start", () => { camAnim = null; });
+
+  function resize(){
+    const w = host.clientWidth, h = host.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(host); resize();
+
+  function themeBg(){
+    const c = getComputedStyle(document.documentElement).getPropertyValue("--scene").trim() || "#c9d2d9";
+    scene.background = new T.Color(c);
+    scene.fog = new T.Fog(scene.background.getHex(), 34, 70);
+  }
+  themeBg();
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", themeBg); } catch (e) {}
+  new MutationObserver(themeBg).observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+
+  const C = {on:0x2ecc71, off:0x000000, bad:0xff2a1a, blue:0x3da5d9};
+  const setLed = (m, color, intensity=1) => { m.material.emissive.setHex(color); m.material.emissiveIntensity = intensity; };
+  const tmp = new T.Vector3();
+
+  G.ok = true;
+  G.setCam = setCam;
+  G.update = function(dtReal){
+    const L = S.lv, o = S.out, fl = S.flow, D = S.DI, B = S.B, A = S.A;
+    const blink = blinkOn();
+    setLevel(T1, L.t1); setLevel(T2, L.t2); setLevel(TL, L.tl); setCac(C1, L.c1); setCac(C2, L.c2);
+    placeRing(R.hMax1, sp.hMax1/100); placeRing(R.hDem1, sp.hDem1/100); placeRing(R.lsl1, sp.lsl1/100);
+    placeRing(R.hMax2, sp.hMax2/100); placeRing(R.hDem2, sp.hDem2/100); placeRing(R.lsl2, sp.lsl2/100);
+    placeRing(R.lodoHH, sp.lodoHH/sp.hL); placeRing(R.lodoStart, sp.lodoStart/sp.hL); placeRing(R.lodoMin, sp.lodoMin/sp.hL);
+    R.lodoHH.material.opacity = B.hh ? (blink ? 1 : 0.2) : 0.9;
+
+    const spin = (obj, on, axis, speed) => { if (on) obj.rotation[axis] += speed * dtReal; };
+    setLed(B01.led, alarms.has("DRY_B01") ? C.bad : o.b01 ? C.on : C.off); spin(B01.blade, o.b01, "x", 30);
+    setLed(B02.led, alarms.has("DRY_B02") ? C.bad : o.b02 ? C.on : C.off); spin(B02.blade, o.b02, "x", 30);
+    setLed(BLO.led, alarms.has("DRY_BL") ? C.bad : o.blodo ? C.on : C.off); spin(BLO.blade, o.blodo, "x", 30);
+    setLed(BAL.led, alarms.has("DRY_BA") ? C.bad : o.balim ? C.on : B.feedLock ? (blink ? C.bad : C.off) : C.off); spin(BAL.blade, o.balim, "x", 30);
+    setLed(MX1.led, o.mx01 ? C.on : C.off); spin(MX1.shaft, o.mx01, "y", 7);
+    setLed(MX2.led, o.mx02 ? C.on : C.off); spin(MX2.shaft, o.mx02, "y", 7);
+    setLed(mpolLed, o.mpol ? C.on : C.off);
+    const vs = (v, open) => { setLed(v.ind, open ? C.on : C.off, 0.9); v.flag.rotation.y += ((open ? 0 : Math.PI/2) - v.flag.rotation.y) * Math.min(1, dtReal*6); };
+    vs(vAG, o.xvag); vs(vC1, o.xv1); vs(vC2, o.xv2);
+    setLed(C1.led, D.LSHC01 === 0 ? C.bad : C.on, 0.8); setLed(C2.led, D.LSHC02 === 0 ? C.bad : C.on, 0.8);
+
+    const ltFault = S.AI.lt < 3.6;
+    setLed(ltLed, ltFault ? (blink ? C.bad : C.off) : C.blue, 0.9);
+    const surf = TL.baseY + TL.h*Math.min(1, L.tl), top = 3.25, ch = Math.max(0.05, top - surf);
+    cone.scale.set(1 + ch*0.25, ch, 1 + ch*0.25); cone.position.y = surf + ch/2;
+    cone.visible = !ltFault;
+
+    setLed(P01.pwr, C.on, 0.8); setLed(P02.pwr, C.on, 0.8);
+    setLed(P01.run, (o.xvag || o.b01 || o.mx01) ? C.on : C.off, 0.8);
+    setLed(P02.run, (o.b02 || o.balim) ? C.on : C.off, 0.8);
+    const comLed = S.comm ? C.on : (blink ? C.bad : C.off);
+    setLed(P01.com, comLed, 0.8); setLed(P02.com, comLed, 0.8);
+    conduit.material.color.setHex(S.comm ? 0x5d666e : 0xd32f2f);
+
+    // XA-LODO pisca até reconhecer e fica fixa enquanto o nível estiver acima do LSHH
+    const lodoOn = o.xalodo && (latched("AL_HH") ? blink : true);
+    [lampLodo, lampLodo2].forEach(m => { m.material.emissive.setHex(lodoOn ? 0xff2a1a : 0); m.material.emissiveIntensity = lodoOn ? 1.6 : 0; });
+    lightLodo.intensity = lodoOn ? 1.6 : 0; lightLodo2.intensity = lodoOn ? 2.4 : 0;
+    lampFim.material.emissive.setHex(o.xa ? 0xffb300 : 0); lampFim.material.emissiveIntensity = o.xa ? 1.4 : 0;
+    lightFim.intensity = o.xa ? 1.2 : 0;
+
+    const sludgeOut = fl.outL || fl.out2;
+    const flow = {ag:fl.in1, pol:o.mpol, b01a:fl.out1, b01b:fl.out1, b02a:fl.out2, b02b:fl.out2,
+      alimA:fl.inL, alimB:fl.inL, bloA:fl.outL, bloB:sludgeOut, c1:o.xv1 && sludgeOut, c2:o.xv2 && sludgeOut};
+    for (const id in pipes){
+      const p = pipes[id], on = !!flow[id];
+      if (on) p.off = (p.off + dtReal * 0.9) % p.total;
+      const n = p.parts.length, gap = p.total / n;
+      for (let i = 0; i < n; i++){
+        const s = p.parts[i]; s.visible = on;
+        if (on) pointAt(p, (p.off + i*gap) % p.total, s.position);
+      }
+    }
+
+    setLabel("t1", "TANQUE 01", `${fmt(L.t1*100,0)} % · ${A.fill ? "enchendo" : A.mix1 > 0 ? "mistura " + mmss(A.mix1) : A.pronto ? "solução pronta" : "aguardando"}`, alarms.has("OVF_t1") ? "al" : "lv");
+    setLabel("t2", "TANQUE 02", `${fmt(L.t2*100,0)} % · ${A.mix2 > 0 ? "mistura " + mmss(A.mix2) : A.disp ? "disponível" : "recebendo"}`, alarms.has("OVF_t2") ? "al" : D.LSL02B === 0 ? "wn" : "lv");
+    setLabel("tl", "TANQUE DE LODO", `${fmt(L.tl*sp.hL,2)} m · ${fmt(L.tl*sp.capL,1)} m³${B.hh ? " · LSHH" : ""}`, B.hh || alarms.has("OVF_tl") ? "al" : !B.lodoOk ? "wn" : "lv");
+    setLabel("xvag", "XV-AG", o.xvag ? "aberta" : "fechada", o.xvag ? "on" : "");
+    setLabel("mpol", "M-POL", o.mpol ? "dosando" : "parado", o.mpol ? "on" : "");
+    setLabel("mx01", "MX-01", o.mx01 ? "ligado" : "parado", o.mx01 ? "on" : "");
+    setLabel("mx02", "MX-02", o.mx02 ? "ligado" : "parado", o.mx02 ? "on" : "");
+    setLabel("b01", "B-01", alarms.has("DRY_B01") ? "a seco" : o.b01 ? "ligada" : "parada", alarms.has("DRY_B01") ? "al" : o.b01 ? "on" : "");
+    setLabel("b02", "B-02", alarms.has("DRY_B02") ? "a seco" : o.b02 ? "ligada" : "parada", alarms.has("DRY_B02") ? "al" : o.b02 ? "on" : "");
+    setLabel("blodo", "B-LODO", alarms.has("DRY_BL") ? "a seco" : o.blodo ? "ligada" : "parada", alarms.has("DRY_BL") ? "al" : o.blodo ? "on" : "");
+    setLabel("balim", "B-ALIM", o.balim ? "ligada" : B.feedLock ? "bloqueada · LSHH" : B.feedWhy ? "parada · " + B.feedWhy : "parada", o.balim ? "on" : B.feedLock ? "al" : B.feedWhy ? "wn" : "");
+    setLabel("lt", "LT-LODO", ltFault ? `${fmt(S.AI.lt,1)} mA · falha` : `${fmt(S.AI.lt,1)} mA · ${fmt(B.lvl,2)} m`, ltFault || B.hh ? "al" : "lv");
+    setLabel("xv1", "XV-C01", o.xv1 ? "aberta" : "fechada", o.xv1 ? "on" : "");
+    setLabel("xv2", "XV-C02", o.xv2 ? "aberta" : "fechada", o.xv2 ? "on" : "");
+    setLabel("c1", "CAÇAMBA 01", `${fmt(L.c1*100,0)} % · ${D.LSHC01 ? "livre" : "cheia"}`, D.LSHC01 ? "lv" : "wn");
+    setLabel("c2", "CAÇAMBA 02", `${fmt(L.c2*100,0)} % · ${D.LSHC02 ? "livre" : "cheia"}`, D.LSHC02 ? "lv" : "wn");
+    setLabel("p01", "PAINEL 01", "Spark A", "");
+    setLabel("p02", "PAINEL 02", `Spark B · ${o.xalodo ? "XA-LODO ligada" : o.xa ? "XA-FIM ligada" : "etapa " + B.step}`, o.xalodo ? "al" : o.xa ? "wn" : "");
+    setLabel("xalodo", "XA-LODO", o.xalodo ? (latched("AL_HH") ? "alarme · reconhecer" : "nível acima do LSHH") : "desligada", o.xalodo ? "al" : "");
+    setLabel("inj", "INJEÇÃO", "polímero na linha de lodo", o.b02 ? "on" : "");
+    setLabel("afl", "AFLUENTE", S.feedAvail ? "disponível" : "indisponível", S.feedAvail ? "" : "wn");
+
+    if (camAnim){
+      camAnim.k = Math.min(1, camAnim.k + dtReal * 1.6);
+      const k = camAnim.k, e = k < 0.5 ? 2*k*k : 1 - Math.pow(-2*k + 2, 2)/2;
+      camera.position.lerpVectors(camAnim.from.p, camAnim.to.p, e);
+      controls.target.lerpVectors(camAnim.from.t, camAnim.to.t, e);
+      if (camAnim.k >= 1) camAnim = null;
+    }
+    controls.update();
+    renderer.render(scene, camera);
+
+    const w = host.clientWidth, h = host.clientHeight;
+    for (const id in labels){
+      const Lb = labels[id];
+      const far = Lb.minor && camera.position.distanceTo(Lb.pos) > 11.5 && !Lb.cls.includes(" al");
+      tmp.copy(Lb.pos).project(camera);
+      const vis = !far && tmp.z < 1 && tmp.x > -1.05 && tmp.x < 1.05 && tmp.y > -1.05 && tmp.y < 1.1;
+      Lb.d.style.visibility = vis ? "visible" : "hidden";
+      if (vis) Lb.d.style.transform = `translate(${((tmp.x+1)/2*w).toFixed(1)}px, ${((1-tmp.y)/2*h).toFixed(1)}px) translate(-50%,-100%)`;
+    }
+  };
+  return true;
+}
+
+/* ===================== Sinótico 2D ===================== */
+const NS = "http://www.w3.org/2000/svg";
+const svg = $("svg");
+const el = {};
+function mk(tag, attrs = {}, parent = svg, text){
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  parent.appendChild(e); return e;
+}
+const TK = {
+  t1:{x:110,y:120,w:150,h:240,cls:"liq",name:"TANQUE 01",sub:"Preparo de polímero"},
+  t2:{x:380,y:120,w:150,h:240,cls:"liq",name:"TANQUE 02",sub:"Maturação"},
+  tl:{x:640,y:120,w:170,h:240,cls:"sl", name:"TANQUE DE LODO",sub:""},
+};
+const CAC = {c1:{x:985,y:95,w:100,h:105,name:"CAÇAMBA 01"}, c2:{x:985,y:385,w:100,h:105,name:"CAÇAMBA 02"}};
+function pipe2(id, d){ el[id] = mk("path", {d, class:"pipe"}); }
+function valve2(id, cx, cy, tag){
+  const g = mk("g", {});
+  el[id] = mk("path", {d:`M${cx-12} ${cy-8} L${cx+12} ${cy+8} L${cx+12} ${cy-8} L${cx-12} ${cy+8} Z`, class:"eq"}, g);
+  mk("text", {x:cx, y:cy-14, "text-anchor":"middle", class:"tag"}, g, tag);
+  el[id+"_s"] = mk("text", {x:cx, y:cy+24, "text-anchor":"middle", class:"state"}, g, "fechada");
+}
+function pump2(id, cx, cy, tag){
+  const g = mk("g", {});
+  el[id] = mk("circle", {cx, cy, r:15, class:"eq"}, g);
+  el[id+"_t"] = mk("path", {d:`M${cx-6} ${cy-8} L${cx+9} ${cy} L${cx-6} ${cy+8} Z`, class:"tri"}, g);
+  if (tag) mk("text", {x:cx, y:cy+32, "text-anchor":"middle", class:"tag"}, g, tag);
+  el[id+"_s"] = mk("text", {x:cx, y:cy+(tag ? 45 : 32), "text-anchor":"middle", class:"state"}, g, "parada");
+}
+function mixer2(id, cx, topY, bottomY, tag){
+  const g = mk("g", {});
+  mk("line", {x1:cx, y1:topY+13, x2:cx, y2:bottomY, stroke:"var(--ink)", "stroke-width":2}, g);
+  mk("path", {d:`M${cx-16} ${bottomY-6} L${cx} ${bottomY} L${cx+16} ${bottomY-6} M${cx-16} ${bottomY+6} L${cx} ${bottomY} L${cx+16} ${bottomY+6}`, stroke:"var(--ink)", "stroke-width":2, fill:"none"}, g);
+  el[id] = mk("circle", {cx, cy:topY, r:13, class:"eq"}, g);
+  el[id+"_m"] = mk("text", {x:cx, y:topY+4.5, "text-anchor":"middle", class:"tag", style:"font-size:12px"}, g, "M");
+  mk("text", {x:cx+20, y:topY-6, class:"tag"}, g, tag);
+  el[id+"_s"] = mk("text", {x:cx+20, y:topY+8, class:"state"}, g, "parado");
+}
+function tank2(k){
+  const t = TK[k], g = mk("g", {});
+  mk("rect", {x:t.x, y:t.y, width:t.w, height:t.h, class:"vessel", rx:3}, g);
+  el[k+"_liq"] = mk("rect", {x:t.x+1.5, y:t.y+t.h, width:t.w-3, height:0, class:t.cls}, g);
+  mk("rect", {x:t.x, y:t.y, width:t.w, height:t.h, fill:"none", stroke:"var(--ink)", "stroke-width":1.5, rx:3}, g);
+  mk("text", {x:t.x + t.w/2, y:t.y+t.h+20, "text-anchor":"middle", class:"tag"}, g, t.name);
+  if (t.sub) mk("text", {x:t.x + t.w/2, y:t.y+t.h+34, "text-anchor":"middle", class:"sub"}, g, t.sub);
+  el[k+"_v"] = mk("text", {x:t.x + t.w/2, y:t.y+t.h+(t.sub?50:36), "text-anchor":"middle", class:"val"}, g, "");
+  el[k+"_ovf"] = mk("text", {x:t.x + t.w/2, y:t.y-6, "text-anchor":"middle", class:"ovf"}, g, "");
+}
+function mark2(id, k, label, withDot, cls){
+  const t = TK[k], g = mk("g", {});
+  el[id] = {line: mk("line", {x1:t.x+2, x2:t.x+t.w-2, class:"mark " + (cls||"")}, g),
+    text: mk("text", {x:t.x+t.w-8, "text-anchor":"end", class:"mlab"}, g, label),
+    dot: withDot ? mk("circle", {cx:t.x+t.w+9, r:5, class:"dot"}, g) : null, k};
+}
+function cacamba2(k){
+  const c = CAC[k], g = mk("g", {});
+  const pts = `${c.x},${c.y} ${c.x+c.w},${c.y} ${c.x+c.w-14},${c.y+c.h} ${c.x+14},${c.y+c.h}`;
+  const clip = mk("clipPath", {id:"clip_"+k}, g);
+  mk("polygon", {points:pts}, clip);
+  mk("polygon", {points:pts, class:"vessel"}, g);
+  el[k+"_liq"] = mk("rect", {x:c.x, y:c.y+c.h, width:c.w, height:0, class:"sl", "clip-path":`url(#clip_${k})`}, g);
+  mk("polygon", {points:pts, fill:"none", stroke:"var(--ink)", "stroke-width":1.5}, g);
+  mk("text", {x:c.x+c.w/2, y:c.y+c.h+18, "text-anchor":"middle", class:"tag"}, g, c.name);
+  el[k+"_v"] = mk("text", {x:c.x+c.w/2, y:c.y+c.h+32, "text-anchor":"middle", class:"val"}, g, "");
+  const ly = c.y + c.h*0.38;
+  el[k+"_dot"] = mk("circle", {cx:c.x-8, cy:ly, r:5, class:"dot"}, g);
+  mk("text", {x:c.x-16, y:ly+4, "text-anchor":"end", class:"sub"}, g, k === "c1" ? "LSH-C01" : "LSH-C02");
+}
+function lamp2(id, cx, cy, tag){
+  const g = mk("g", {});
+  el[id] = mk("circle", {cx, cy, r:15, class:"lamp"}, g);
+  mk("path", {d:`M${cx-11} ${cy-11} L${cx+11} ${cy+11} M${cx+11} ${cy-11} L${cx-11} ${cy+11}`, stroke:"var(--ink)", "stroke-width":1.2}, g);
+  mk("text", {x:cx, y:cy+30, "text-anchor":"middle", class:"tag"}, g, tag);
+  el[id+"_s"] = mk("text", {x:cx, y:cy+43, "text-anchor":"middle", class:"state"}, g, "desligada");
+}
+function buildSvg(){
+  pipe2("p_ag", "M18 70 H140 V120");
+  pipe2("p_pol", "M230 68 V120");
+  pipe2("p_b01a", "M260 345 H290 V410 H305");
+  pipe2("p_b01b", "M335 410 H350 V88 H420 V120");
+  pipe2("p_b02a", "M530 345 H560 V410 H575");
+  pipe2("p_b02b", "M605 410 H615 V515 H892 V448");
+  pipe2("p_ina", "M600 62 H675");
+  pipe2("p_inb", "M705 62 H745 V120");
+  pipe2("p_bla", "M810 345 H828 V440 H845");
+  pipe2("p_blb", "M875 440 H930");
+  pipe2("p_man", "M930 440 V70");
+  pipe2("p_c1", "M930 70 H1035 V95");
+  pipe2("p_c2", "M930 350 H1035 V385");
+  mk("text", {x:18, y:110, class:"sub"}, svg, "Água potável");
+  mk("text", {x:600, y:84, class:"sub"}, svg, "Afluente de lodo");
+  mk("circle", {cx:892, cy:440, r:5, fill:"var(--ink)"});
+  mk("text", {x:900, y:468, class:"sub"}, svg, "injeção");
+  mk("text", {x:900, y:481, class:"sub"}, svg, "de polímero");
+  tank2("t1"); tank2("t2"); tank2("tl");
+  mark2("m_hmax1","t1","LS-01 máx",true); mark2("m_hdem1","t1","LS-01 demanda",false); mark2("m_lsl1","t1","LSL-01",true);
+  mark2("m_hmax2","t2","LS-02 máx",true); mark2("m_hdem2","t2","LS-02 demanda",false); mark2("m_lsl2","t2","LSL-02",true);
+  mark2("m_lhh","tl","LSHH transbordamento",false,"hh"); mark2("m_lstart","tl","partida",false); mark2("m_lmin","tl","mínimo",false);
+  valve2("v_ag", 80, 70, "XV-AG");
+  const g = mk("g", {});
+  el.mpol = mk("rect", {x:205, y:40, width:50, height:28, rx:3, class:"eq"}, g);
+  el.mpol_m = mk("text", {x:230, y:59, "text-anchor":"middle", class:"tag", style:"font-size:12px"}, g, "M");
+  mk("text", {x:262, y:52, class:"tag"}, g, "M-POL");
+  el.mpol_s = mk("text", {x:262, y:66, class:"state"}, g, "parado");
+  mixer2("mx01", 185, 98, 320, "MX-01"); mixer2("mx02", 455, 98, 320, "MX-02");
+  pump2("b01", 320, 410, "B-01"); pump2("b02", 590, 410, "B-02"); pump2("blodo", 860, 440, "B-LODO");
+  pump2("balim", 690, 62, "");
+  mk("text", {x:690, y:38, "text-anchor":"middle", class:"tag"}, svg, "B-ALIM");
+  valve2("v_c1", 980, 70, "XV-C01"); valve2("v_c2", 980, 350, "XV-C02");
+  cacamba2("c1"); cacamba2("c2");
+  const gl = mk("g", {});
+  mk("rect", {x:768, y:104, width:26, height:16, rx:2, class:"eq"}, gl);
+  mk("path", {d:"M773 128 q8 6 16 0 M771 136 q10 8 20 0", stroke:"var(--ink)", fill:"none", "stroke-width":1.2}, gl);
+  el.lt_v = mk("text", {x:725, y:414, "text-anchor":"middle", class:"val"}, gl, "");
+  lamp2("xa", 1035, 262, "XA-FIM");
+  lamp2("xal", 872, 205, "XA-LODO");
+  const gp = mk("g", {});
+  mk("rect", {x:20, y:470, width:120, height:56, rx:3, fill:"none", stroke:"var(--pipe)", "stroke-dasharray":"4 3"}, gp);
+  mk("text", {x:80, y:492, "text-anchor":"middle", class:"tag"}, gp, "PAINEL 01");
+  mk("text", {x:80, y:510, "text-anchor":"middle", class:"sub"}, gp, "Spark A");
+  mk("rect", {x:160, y:470, width:120, height:56, rx:3, fill:"none", stroke:"var(--pipe)", "stroke-dasharray":"4 3"}, gp);
+  mk("text", {x:220, y:492, "text-anchor":"middle", class:"tag"}, gp, "PAINEL 02");
+  mk("text", {x:220, y:510, "text-anchor":"middle", class:"sub"}, gp, "Spark B");
+  el.rs = mk("line", {x1:140, y1:498, x2:160, y2:498, stroke:"var(--ink)", "stroke-width":2}, gp);
+  el.rsT = mk("text", {x:150, y:542, "text-anchor":"middle", class:"sub"}, gp, "RS-485 Modbus");
+}
+function setEq(id, on, onTxt, offTxt){
+  el[id].classList.toggle("on", on);
+  const t = el[id+"_t"]; if (t) t.style.fill = on ? "var(--bg)" : "var(--ink)";
+  const m = el[id+"_m"]; if (m) m.style.fill = on ? "var(--bg)" : "var(--ink)";
+  const s = el[id+"_s"]; if (s){ s.textContent = on ? onTxt : offTxt; s.classList.toggle("on", on); }
+}
+function setFlow(id, on){ el[id].classList.toggle("flow", !!on); }
+function placeMark(id, frac){
+  const m = el[id], t = TK[m.k], y = t.y + t.h*(1-Math.max(0, Math.min(1,frac)));
+  m.line.setAttribute("y1", y); m.line.setAttribute("y2", y);
+  m.text.setAttribute("y", y - 3);
+  if (m.dot) m.dot.setAttribute("cy", y);
+}
+function setDot(dot, val, forced, alarm){
+  dot.classList.toggle("c", val === 1); dot.classList.toggle("f", forced);
+  dot.style.fill = alarm ? "var(--alarm)" : "";
+}
+function renderSvg(){
+  const L = S.lv, o = S.out, fl = S.flow, D = S.DI, f = S.force, B = S.B;
+  for (const k of ["t1","t2","tl"]){
+    const t = TK[k], hgt = (t.h-3)*L[k];
+    el[k+"_liq"].setAttribute("y", t.y + t.h - 1.5 - hgt);
+    el[k+"_liq"].setAttribute("height", Math.max(0,hgt));
+    el[k+"_ovf"].textContent = alarms.has("OVF_"+k) ? "TRANSBORDO" : (k === "tl" && B.hh ? "LSHH-LODO ATUADO" : "");
+  }
+  el.t1_v.textContent = `${fmt(L.t1*100,0)} % · ${fmt(L.t1*sp.cap1,2)} m³`;
+  el.t2_v.textContent = `${fmt(L.t2*100,0)} % · ${fmt(L.t2*sp.cap2,2)} m³`;
+  el.tl_v.textContent = `${fmt(L.tl*sp.hL,2)} m · ${fmt(L.tl*sp.capL,1)} m³`;
+  for (const k of ["c1","c2"]){
+    const c = CAC[k], hgt = c.h*L[k];
+    el[k+"_liq"].setAttribute("y", c.y + c.h - hgt); el[k+"_liq"].setAttribute("height", hgt);
+    el[k+"_v"].textContent = `${fmt(L[k]*100,0)} %`;
+  }
+  placeMark("m_hmax1", sp.hMax1/100); placeMark("m_hdem1", sp.hDem1/100); placeMark("m_lsl1", sp.lsl1/100);
+  placeMark("m_hmax2", sp.hMax2/100); placeMark("m_hdem2", sp.hDem2/100); placeMark("m_lsl2", sp.lsl2/100);
+  placeMark("m_lhh", sp.lodoHH/sp.hL); placeMark("m_lstart", sp.lodoStart/sp.hL); placeMark("m_lmin", sp.lodoMin/sp.hL);
+  setDot(el.m_hmax1.dot, D.LS01, f.LS01 !== "auto");
+  setDot(el.m_lsl1.dot, D.LSL01, f.LSL01 !== "auto", D.LSL01 === 0);
+  setDot(el.m_hmax2.dot, D.LS02, f.LS02 !== "auto");
+  setDot(el.m_lsl2.dot, D.LSL02B, f.LSL02A !== "auto" || f.LSL02B !== "auto", D.LSL02B === 0);
+  setDot(el.c1_dot, D.LSHC01, f.LSHC01 !== "auto", D.LSHC01 === 0);
+  setDot(el.c2_dot, D.LSHC02, f.LSHC02 !== "auto", D.LSHC02 === 0);
+  setEq("v_ag", o.xvag, "aberta", "fechada"); setEq("mpol", o.mpol, "dosando", "parado");
+  setEq("mx01", o.mx01, "ligado", "parado"); setEq("mx02", o.mx02, "ligado", "parado");
+  setEq("b01", o.b01, "ligada", "parada"); setEq("b02", o.b02, "ligada", "parada");
+  setEq("blodo", o.blodo, "ligada", "parada");
+  setEq("balim", o.balim, "ligada", B.feedLock ? "bloqueada" : "parada");
+  setEq("v_c1", o.xv1, "aberta", "fechada"); setEq("v_c2", o.xv2, "aberta", "fechada");
+  el.xa.classList.toggle("on", o.xa); el.xa_s.textContent = o.xa ? "ligada" : "desligada"; el.xa_s.classList.toggle("on", o.xa);
+  const lodoOn = o.xalodo && (latched("AL_HH") ? blinkOn() : true);
+  el.xal.classList.toggle("red", lodoOn); el.xal_s.textContent = o.xalodo ? "ligada" : "desligada"; el.xal_s.classList.toggle("bad", o.xalodo);
+  el.balim_s.classList.toggle("bad", B.feedLock);
+  el.b01_s.classList.toggle("bad", alarms.has("DRY_B01"));
+  el.b02_s.classList.toggle("bad", alarms.has("DRY_B02"));
+  el.blodo_s.classList.toggle("bad", alarms.has("DRY_BL"));
+  setFlow("p_ag", fl.in1); setFlow("p_pol", o.mpol);
+  setFlow("p_b01a", fl.out1); setFlow("p_b01b", fl.out1);
+  setFlow("p_b02a", fl.out2); setFlow("p_b02b", fl.out2);
+  setFlow("p_ina", fl.inL); setFlow("p_inb", fl.inL);
+  setFlow("p_bla", fl.outL); setFlow("p_blb", fl.outL || fl.out2);
+  setFlow("p_man", (o.xv1 || o.xv2) && (fl.outL || fl.out2));
+  setFlow("p_c1", o.xv1 && (fl.outL || fl.out2)); setFlow("p_c2", o.xv2 && (fl.outL || fl.out2));
+  const ma = S.AI.lt;
+  el.lt_v.textContent = ma < 3.6 ? `LT-LODO · ${fmt(ma,1)} mA · FALHA` : `LT-LODO · ${fmt(ma,1)} mA · ${fmt(B.lvl||0,2)} m`;
+  el.lt_v.classList.toggle("bad", ma < 3.6 || B.hh);
+  el.rs.style.stroke = S.comm ? "var(--ink)" : "var(--alarm)";
+  el.rs.style.strokeDasharray = S.comm ? "" : "3 3";
+  el.rsT.textContent = S.comm ? "RS-485 Modbus" : "RS-485 sem comunicação";
+  el.rsT.classList.toggle("bad", !S.comm);
+}
+
+/* ===================== Painéis de estado ===================== */
+function rows(target, list){
+  $(target).innerHTML = list.map(([a,b]) => `<div class="row"><span>${a}</span><span>${b}</span></div>`).join("");
+}
+function pill(id, txt, cls){ const p = $(id); p.textContent = txt; p.className = "pill " + (cls||""); }
+
+function renderPanels(){
+  const A = S.A, B = S.B, o = S.out;
+  let prep;
+  if (A.fill) prep = `Enchendo · <span class="mono">${mmss(A.fillT)}</span>`;
+  else if (latched("AL_FILL")) prep = `<span class="pill bad">Bloqueado por alarme</span>`;
+  else if (A.mix1 > 0) prep = `Mistura · faltam <span class="mono">${mmss(A.mix1)}</span>`;
+  else if (A.pronto) prep = `<span class="pill ok">Solução pronta</span>`;
+  else prep = "Aguardando demanda";
+  let b01;
+  if (o.b01) b01 = `Transferindo · <span class="mono">${mmss(A.b01T)}</span>`;
+  else if (A.b01Block) b01 = `Bloqueada: ${A.b01Block}`;
+  else if (S.DI.LS02 === 1) b01 = "Parada · T02 sem demanda";
+  else b01 = "Liberada";
+  let t2;
+  if (A.mix2 > 0) t2 = `Mistura · faltam <span class="mono">${mmss(A.mix2)}</span>`;
+  else if (A.disp) t2 = `<span class="pill ok">Solução disponível</span>`;
+  else t2 = "Recebendo transferência";
+  rows("stA", [
+    ["Preparo T01 (malha A1)", prep],
+    ["MX-01", o.mx01 ? "Ligado (acima do LSL-01)" : "Parado (abaixo do LSL-01)"],
+    ["B-01 (malha A2)", b01],
+    ["Tanque 02", t2],
+    ["MX-02", o.mx02 ? "Ligado (acima do LSL-02)" : "Parado (abaixo do LSL-02)"],
+    ["Modbus → Spark B", S.comm ? `envia "solução ${A.disp ? "disponível" : "indisponível"}"` : `<span class="pill bad">sem comunicação</span>`],
+  ]);
+  const aAl = ["AL_FILL","AL_B01","DRY_B01","DRY_MX1","OVF_t1","OVF_t2"].some(k => alarms.has(k));
+  pill("pillA", aAl ? "Alarme" : (o.xvag || o.b01) ? "Em operação" : "Aguardando", aAl ? "bad" : (o.xvag || o.b01) ? "ok" : "");
+
+  let stepTxt = `${B.step} · ${STEP[B.step]}`;
+  if ((B.step === 5 || B.step === 6) && B.phase) stepTxt += ` · ${PHASE[B.phase]}`;
+  const feedTxt = o.balim ? `<span class="pill ok">Ligada</span>` : B.feedLock ? `<span class="pill bad">Bloqueada</span> ${B.feedWhy}` : `Parada · ${B.feedWhy}`;
+  rows("stB", [
+    ["Etapa", stepTxt],
+    ["Tempo de dosagem no ciclo", `<span class="mono">${hms(B.dosT)}</span>`],
+    ["Nível de lodo (LT-LODO)", S.AI.lt < 3.6 ? `<span class="pill bad">Falha do sensor</span>` : `<span class="mono">${fmt(B.lvl,2)} m</span>${B.hh ? ` <span class="pill bad">LSHH</span>` : ""}`],
+    ["Alimentação (B-ALIM)", feedTxt],
+    ["Caçambas", `01 ${S.DI.LSHC01 ? "livre" : "cheia"} · 02 ${S.DI.LSHC02 ? "livre" : "cheia"}`],
+  ]);
+  const P = B.perm;
+  const pr = (ok, txt) => `<i class="${ok ? "y" : "n"}">${ok ? "✓" : "✕"}</i><span>${txt}</span>`;
+  $("perm").innerHTML = [
+    pr(P.lodo, "Há lodo: LT-LODO acima do nível de partida (retoma) / mínimo (mantém)"),
+    pr(P.hh, "Sem transbordamento (LSHH-LODO normal e alarme reconhecido)"),
+    pr(P.t02, "LSL-02 coberto (tanque 02 acima do nível baixo)"),
+    pr(P.disp, `Solução disponível, recebida do Spark A${S.comm ? "" : " · último valor recebido"}`),
+    pr(P.alarm, "Sem alarme de tempo máximo de dosagem"),
+    pr(S.DI.LSHC01 === 1 || S.DI.LSHC02 === 1, "Caçamba livre (LSH-C01 ou LSH-C02 normal)"),
+  ].join("");
+  const paused = B.phase && B.phase.startsWith("pausa") && (B.step === 5 || B.step === 6);
+  const trip = latched("AL_HH") || B.hh;
+  pill("pillB", trip ? "Transbordamento" : B.xa ? "Fim de processo" : paused ? "Em pausa" : o.b02 ? "Dosando" : "Aguardando",
+       trip ? "bad" : B.xa ? "warn" : paused ? "warn" : o.b02 ? "ok" : "");
+
+  $("tripBanner").hidden = !trip;
+  $("tripText").textContent = latched("AL_HH")
+    ? `Transbordamento do tanque de lodo (LSHH-LODO em ${fmt(sp.lodoHH,2)} m): B-ALIM desligada, dosagem parada e XA-LODO ligada. Reconheça o alarme para liberar a dosagem.`
+    : `Nível do tanque de lodo ainda acima do LSHH-LODO (${fmt(B.lvl,2)} m). A B-ALIM religa abaixo de ${fmt(sp.lodoHHreset,2)} m.`;
+
+  const ul = $("alarmList");
+  if (!alarms.size) ul.innerHTML = `<li class="none">Nenhum alarme ativo</li>`;
+  else ul.innerHTML = [...alarms.entries()].map(([k,a]) => `<li class="al ${k === "AL_HH" ? "crit" : a.latch ? "latch" : ""}">${a.msg}${a.latch ? " <small>(retido até reconhecer)</small>" : ""}</li>`).join("");
+  if (logDirty){
+    $("log").innerHTML = logItems.map(l => `<div><time>${hms(l.t)}</time><span class="${l.sev === "a" ? "a" : l.sev === "w" ? "w" : ""}">${l.msg}</span></div>`).join("") || `<div class="none">Sem eventos ainda</div>`;
+    logDirty = false;
+  }
+}
+
+/* ===================== Lista de I/O ===================== */
+const IO = [
+  [1,"LS-01","A","DI","U51-1", () => S.DI.LS01, v => v ? "fechado · T01 cheio" : "aberto · pede preparo", "LS01"],
+  [2,"LSL-01","A","DI","U51-2", () => S.DI.LSL01, v => v ? "fechado · nível ok" : "aberto · nível baixo", "LSL01"],
+  [3,"LS-02","A","DI","U51-3 *", () => S.DI.LS02, v => v ? "fechado · T02 cheio" : "aberto · pede transferência", "LS02"],
+  [4,"LSL-02 (c2)","A","DI","U51-4 *", () => S.DI.LSL02A, v => v ? "fechado · nível ok" : "aberto · nível baixo", "LSL02A"],
+  [5,"XV-AG","A","Relé","CN1", () => +S.out.xvag, v => v ? "aberta" : "fechada"],
+  [6,"M-POL","A","Relé","CN2", () => +S.out.mpol, v => v ? "dosando" : "parado"],
+  [7,"MX-01","A","Relé","CN3", () => +S.out.mx01, v => v ? "misturando" : "parado"],
+  [8,"B-01","A","Relé","CN4", () => +S.out.b01, v => v ? "bombeando" : "parada"],
+  [9,"MX-02","A","PWM→DO","U39-1", () => +S.out.mx02, v => v ? "misturando" : "parado"],
+  [10,"LSH-C01","B","DI","U51-1", () => S.DI.LSHC01, v => v ? "fechado · normal" : "aberto · cheia", "LSHC01"],
+  [11,"LSH-C02","B","DI","U51-2", () => S.DI.LSHC02, v => v ? "fechado · normal" : "aberto · cheia", "LSHC02"],
+  [12,"LSL-02 (c1)","B","DI","U51-3 *", () => S.DI.LSL02B, v => v ? "fechado · nível ok" : "aberto · nível baixo", "LSL02B"],
+  [13,"LT-LODO","B","AI 4–20 mA","*", () => S.AI.lt, v => v < 3.6 ? "falha do sensor" : `${fmt((v-4)/16*sp.ltRange,2)} m${S.B.hh ? " · LSHH atuado" : ""}`, "LT"],
+  [14,"B-02","B","Relé","CN1", () => +S.out.b02, v => v ? "dosando" : "parada"],
+  [15,"B-LODO","B","Relé","CN2", () => +S.out.blodo, v => v ? "bombeando" : "parada"],
+  [16,"XV-C01","B","Relé","CN3", () => +S.out.xv1, v => v ? "aberta" : "fechada"],
+  [17,"XV-C02","B","Relé","CN4", () => +S.out.xv2, v => v ? "aberta" : "fechada"],
+  [18,"XA-FIM","B","PWM→DO","U39-1", () => +S.out.xa, v => v ? "fim de processo" : "desligada"],
+  [19,"B-ALIM","B","PWM→DO","U39-2 *", () => +S.out.balim, v => v ? "bombeando (via relé auxiliar)" : "parada", null, true],
+  [20,"XA-LODO","B","PWM→DO","U39-3 *", () => +S.out.xalodo, v => v ? "alarme de transbordamento" : "desligada", null, true],
+];
+const ioCells = [];
+function buildIo(){
+  const tb = $("ioBody");
+  IO.forEach(r => {
+    const tr = document.createElement("tr");
+    if (r[8]) tr.className = "new";
+    tr.innerHTML = `<td class="v">${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td class="v"></td><td></td>`;
+    tb.appendChild(tr);
+    ioCells.push({tr, v: tr.children[5], m: tr.children[6], r});
+  });
+}
+function renderIo(){
+  let forced = 0;
+  ioCells.forEach(c => {
+    const v = c.r[5](), key = c.r[7];
+    c.v.textContent = c.r[3].startsWith("AI") ? `${fmt(v,2)} mA` : String(v);
+    let m = c.r[6](v);
+    const isF = key === "LT" ? S.ltMode !== "auto" : key ? S.force[key] !== "auto" : false;
+    c.tr.classList.toggle("forced", isF);
+    if (isF){ forced++; m += " · forçado"; }
+    c.m.textContent = m;
+  });
+  if (!S.comm) forced++;
+  if (!S.feedAvail) forced++;
+  pill("forcedCount", `${forced} ${forced === 1 ? "forçamento" : "forçamentos"}`, forced ? "warn" : "");
+}
+
+/* ===================== Formulários ===================== */
+function buildSpForm(){
+  const f = $("spForm");
+  SP_DEF.forEach(g => {
+    const fs = document.createElement("fieldset");
+    fs.innerHTML = `<legend class="eyebrow">${g.g}</legend>` + g.items.map(i =>
+      `<div class="sp ${i.hh ? "hh" : ""}"><label for="sp_${i.k}">${i.l}</label><input type="number" id="sp_${i.k}" data-k="${i.k}" min="${i.min}" max="${i.max}" step="${i.step||1}" value="${sp[i.k]}"><small>${i.u}</small></div>`).join("");
+    f.appendChild(fs);
+  });
+  const fs = document.createElement("fieldset");
+  fs.style.gridColumn = "1/-1";
+  fs.innerHTML = `<legend class="eyebrow">Opções de lógica a confirmar</legend>` + OPT_DEF.map(o =>
+    `<label class="chk"><input type="checkbox" id="op_${o.k}" data-k="${o.k}" ${sp[o.k] ? "checked" : ""}> ${o.l}</label>`).join("") +
+    `<button type="button" id="spDefault" style="align-self:flex-start;margin-top:6px">Restaurar valores padrão</button>`;
+  f.appendChild(fs);
+
+  f.addEventListener("change", e => {
+    const t = e.target, k = t.dataset.k; if (!k) return;
+    if (t.type === "checkbox") sp[k] = t.checked;
+    else {
+      let v = parseFloat(String(t.value).replace(",", "."));
+      if (!isFinite(v)) { t.value = sp[k]; return; }
+      v = Math.min(+t.max, Math.max(+t.min, v)); t.value = v; sp[k] = v;
+      if (k === "hDem1" && sp.hDem1 >= sp.hMax1) log("w", "Setpoint: a demanda do T01 deve ficar abaixo do nível máximo");
+      if (k === "hDem2" && sp.hDem2 >= sp.hMax2) log("w", "Setpoint: a demanda do T02 deve ficar abaixo do nível máximo");
+      if (sp.lodoStart <= sp.lodoMin) log("w", "Setpoint: o nível de partida do lodo deve ficar acima do mínimo");
+      if (sp.lodoHHreset >= sp.lodoHH) log("w", "Setpoint: o religamento da B-ALIM deve ficar abaixo do LSHH-LODO");
+      if (sp.lodoHH > sp.ltRange) log("w", "Setpoint: o LSHH-LODO está acima da faixa do sensor e nunca será lido");
+      if (sp.lodoHH >= sp.hL) log("w", "Setpoint: o LSHH-LODO está na borda do tanque; o transbordo físico acontece antes do alarme");
+    }
+    log("i", `Setpoint alterado: ${labelOf(k)} = ${t.type === "checkbox" ? (sp[k] ? "sim" : "não") : fmt(sp[k], sp[k] % 1 ? 2 : 0)}`);
+    saveSp(); renderAll();
+  });
+  $("spDefault").addEventListener("click", () => {
+    SP_DEF.forEach(g => g.items.forEach(i => { sp[i.k] = i.v; $("sp_"+i.k).value = i.v; }));
+    OPT_DEF.forEach(o => { sp[o.k] = o.v; $("op_"+o.k).checked = o.v; });
+    saveSp(); log("i", "Setpoints restaurados para os valores padrão"); renderAll();
+  });
+}
+function labelOf(k){
+  for (const g of SP_DEF) for (const i of g.items) if (i.k === k) return i.l;
+  const o = OPT_DEF.find(o => o.k === k); return o ? o.l : k;
+}
+
+const LV = [["t1","Tanque 01"],["t2","Tanque 02"],["tl","Tanque de lodo"],["c1","Caçamba 01"],["c2","Caçamba 02"]];
+function buildVp(){
+  $("vpLevels").innerHTML = LV.map(([k,l]) =>
+    `<div class="row vp"><label for="lv_${k}">${l}</label><input type="range" id="lv_${k}" data-k="${k}" min="0" max="100" step="0.5"><output id="lo_${k}"></output>
+     <label class="chk" style="font-size:13px"><input type="checkbox" id="fz_${k}" data-k="${k}"> congelar</label></div>`).join("");
+  $("vpLevels").addEventListener("input", e => {
+    const t = e.target; if (t.type !== "range") return;
+    S.lv[t.dataset.k] = +t.value / 100; tick(0);
+  });
+  $("vpLevels").addEventListener("change", e => {
+    const t = e.target, item = LV.find(x => x[0] === t.dataset.k); if (!item) return;
+    if (t.type === "range") log("w", `Ponto virtual: ${item[1]} ajustado para ${fmt(+t.value,0)} %`);
+    if (t.type === "checkbox"){ S.frz[t.dataset.k] = t.checked; log("w", `Ponto virtual: ${item[1]} ${t.checked ? "congelado" : "liberado"}`); }
+  });
+  const DIS = [["LS01","LS-01 · Spark A"],["LSL01","LSL-01 · Spark A"],["LS02","LS-02 · Spark A"],["LSL02A","LSL-02 contato 2 · Spark A"],
+               ["LSHC01","LSH-C01 · Spark B"],["LSHC02","LSH-C02 · Spark B"],["LSL02B","LSL-02 contato 1 · Spark B"]];
+  $("vpForces").innerHTML = DIS.map(([k,l]) =>
+    `<label for="fo_${k}">${l}</label><select id="fo_${k}" data-k="${k}"><option value="auto">Automático</option><option value="0">Forçar 0 · aberto</option><option value="1">Forçar 1 · fechado</option></select>`).join("");
+  $("vpForces").addEventListener("change", e => {
+    const t = e.target; S.force[t.dataset.k] = t.value;
+    log("w", `Forçamento: ${DIS.find(d => d[0] === t.dataset.k)[1].split(" · ")[0]} = ${t.options[t.selectedIndex].text}`);
+    tick(0);
+  });
+  $("ltMode").addEventListener("change", e => { S.ltMode = e.target.value; log("w", `LT-LODO: ${e.target.options[e.target.selectedIndex].text}`); tick(0); });
+  $("ltMa").addEventListener("change", e => { const v = parseFloat(e.target.value); if (isFinite(v)) S.ltMa = Math.max(0, Math.min(24, v)); tick(0); });
+  $("commFail").addEventListener("change", e => { S.comm = !e.target.checked; tick(0); });
+  $("feedAvail").addEventListener("change", e => { S.feedAvail = e.target.checked; log("w", `Afluente ${S.feedAvail ? "disponível" : "indisponível"} na sucção da B-ALIM`); tick(0); });
+  $("swap1").addEventListener("click", () => { S.lv.c1 = 0; log("i","Operador: caçamba 01 trocada"); tick(0); });
+  $("swap2").addEventListener("click", () => { S.lv.c2 = 0; log("i","Operador: caçamba 02 trocada"); tick(0); });
+  $("drain").addEventListener("click", () => { S.lv.tl = Math.max(0, S.lv.tl - 1/sp.capL); log("i","Operador: esgotou 1 m³ do tanque de lodo por fora da automação"); tick(0); });
+}
+function syncVp(){
+  LV.forEach(([k]) => {
+    const r = $("lv_"+k);
+    if (document.activeElement !== r) r.value = (S.lv[k]*100).toFixed(1);
+    $("lo_"+k).textContent = `${fmt(S.lv[k]*100,1)} %`;
+    $("fz_"+k).checked = S.frz[k];
+  });
+  for (const k in S.force){ const s = $("fo_"+k); if (s && document.activeElement !== s) s.value = S.force[k]; }
+  if (document.activeElement !== $("ltMode")) $("ltMode").value = S.ltMode;
+  $("commFail").checked = !S.comm; $("feedAvail").checked = S.feedAvail;
+}
+
+/* ===================== Vistas e laço ===================== */
+let view = "3d";
+function setView(v){
+  view = v;
+  $("view3d").hidden = v !== "3d"; $("view2d").hidden = v !== "2d";
+  $("tab3d").setAttribute("aria-pressed", v === "3d"); $("tab2d").setAttribute("aria-pressed", v === "2d");
+  document.querySelectorAll("[data-cam]").forEach(b => b.hidden = v !== "3d");
+  $("camLbl").hidden = v !== "3d"; $("showLabels").parentElement.hidden = v !== "3d";
+  try { localStorage.setItem("o2eco-view", v); } catch (e) {}
+  renderAll();
+}
+function renderAll(){
+  $("clock").textContent = hms(S.t);
+  if (view === "2d") renderSvg();
+  renderPanels(); renderIo(); syncVp();
+}
+function tick(dt){ step(dt); renderAll(); }
+
+let last = performance.now(), lastUi = 0;
+function loop(now){
+  const real = Math.max(0, Math.min(0.25, (now - last)/1000)); last = now;
+  if (running) step(real * (+$("speed").value)); else readSensors();
+  if (now - lastUi > 150){ renderAll(); lastUi = now; }
+  if (view === "3d" && G.ok) G.update(real);
+  requestAnimationFrame(loop);
+}
+
+$("btnRun").addEventListener("click", () => {
+  running = !running;
+  $("btnRun").textContent = running ? "Pausar" : "Continuar";
+  $("btnRun").classList.toggle("primary", running);
+  log("i", running ? "Simulação retomada" : "Simulação pausada");
+});
+$("btnReset").addEventListener("click", () => { initState(); log("i","Simulação reiniciada"); tick(0); });
+$("btnAck").addEventListener("click", () => {
+  let n = 0;
+  for (const [k,a] of alarms) if (a.latch){ alarms.delete(k); n++; if (k === "AL_HH" && S.B.hh) S.B.hhAcked = true; }
+  log("i", n ? `Operador reconheceu ${n} alarme(s) retido(s)` : "Nenhum alarme retido para reconhecer");
+  renderAll();
+});
+$("tab3d").addEventListener("click", () => setView("3d"));
+$("tab2d").addEventListener("click", () => setView("2d"));
+document.querySelectorAll("[data-cam]").forEach(b => b.addEventListener("click", () => G.setCam && G.setCam(b.dataset.cam)));
+$("showLabels").addEventListener("change", e => $("view3d").classList.toggle("hide-labels", !e.target.checked));
+
+initState();
+buildSvg(); buildSpForm(); buildVp(); buildIo();
+let has3d = false;
+try { has3d = init3D(); } catch (e) { has3d = false; }
+if (!has3d){
+  $("view3d").innerHTML = `<p class="fallback">A vista 3D não pôde ser carregada neste navegador (WebGL ou biblioteca indisponível). O sinótico 2D continua funcionando.</p>`;
+}
+let startView = has3d ? "3d" : "2d";
+try { const v = localStorage.getItem("o2eco-view"); if (v === "2d" || (v === "3d" && has3d)) startView = v; } catch (e) {}
+$("tab3d").disabled = !has3d;
+log("i", "Simulação iniciada: T01 com solução pronta, T02 a 70 %, lodo a 1,8 m, caçamba 01 a 20 %");
+setView(startView);
+tick(0);
+requestAnimationFrame(loop);
+})();
+</script>
+
+</body></html>
