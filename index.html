@@ -301,6 +301,7 @@ const SP_DEF = [
     {k:"ltRange",     l:"Faixa do sensor (20 mA)", u:"m", v:3.0, min:0.5, max:20, step:0.1},
     {k:"lodoHH",      l:"LSHH-LODO · transbordamento", u:"m", v:2.7, min:0.1, max:20, step:0.05, hh:true},
     {k:"lodoHHreset", l:"Religa a B-ALIM abaixo de", u:"m", v:2.3, min:0, max:20, step:0.05},
+    {k:"lodoWait",    l:"Sem caçamba livre: B-ALIM para em", u:"m", v:2.3, min:0, max:20, step:0.05},
     {k:"lodoStart",   l:"Nível de partida da dosagem", u:"m", v:0.8, min:0, max:20, step:0.05},
     {k:"lodoMin",     l:"Nível mínimo (parada)", u:"m", v:0.4, min:0, max:20, step:0.05},
   ]},
@@ -356,7 +357,7 @@ function initState(){
     DI:{}, AI:{lt:4},
     A: {fill:false, fillT:0, mix1:0, pronto:true, b01:false, b01T:0, b01Block:null, mix2:0, disp:true},
     B: {step:0, phase:"", t:0, dosT:0, pumps:false, xv1:false, xv2:false, xa:false, lodoOk:true, dispRx:true, perm:{},
-        lvl:0, hh:false, hhAcked:false, feedLock:false, feed:false, feedWhy:""},
+        lvl:0, hh:false, hhAcked:false, feedLock:false, waitLock:false, feed:false, feedWhy:""},
     out: {xvag:false, mpol:false, mx01:false, b01:false, mx02:false, b02:false, blodo:false, xv1:false, xv2:false, xa:false, balim:false, xalodo:false},
     flow: {},
     truck: {st:"base", k:null, t:0},
@@ -491,8 +492,13 @@ function sparkB(dt){
     B.feedLock = false;
     log("i", `Spark B · nível abaixo de ${fmt(sp.lodoHHreset,2)} m: B-ALIM liberada`);
   }
+  // sem caçamba livre o lodo não tem para onde ir: para a B-ALIM antes do LSHH e espera a troca
+  const semCac = D.LSHC01 === 0 && D.LSHC02 === 0;
+  if (!semCac) B.waitLock = false;
+  else if (!fault && lvl >= sp.lodoWait) B.waitLock = true;
   B.feedWhy = fault ? "falha do LT-LODO"
     : B.feedLock ? (latched("AL_HH") ? "transbordamento, reconhecer o alarme" : `transbordamento, religa abaixo de ${fmt(sp.lodoHHreset,2)} m`)
+    : B.waitLock ? "sem caçamba livre, aguardando a troca"
     : !S.feedAvail ? "afluente indisponível" : "";
   const feed = !B.feedWhy;
   if (feed !== B.feed) log(feed ? "i" : "w", feed ? "Spark B · B-ALIM liga" : "Spark B · B-ALIM desliga: " + B.feedWhy);
@@ -1579,6 +1585,7 @@ function buildSpForm(){
       if (k === "hDem2" && sp.hDem2 >= sp.hMax2) log("w", "Setpoint: a demanda do T02 deve ficar abaixo do nível máximo");
       if (sp.lodoStart <= sp.lodoMin) log("w", "Setpoint: o nível de partida do lodo deve ficar acima do mínimo");
       if (sp.lodoHHreset >= sp.lodoHH) log("w", "Setpoint: o religamento da B-ALIM deve ficar abaixo do LSHH-LODO");
+      if (sp.lodoWait >= sp.lodoHH) log("w", "Setpoint: a parada da B-ALIM sem caçamba deve ficar abaixo do LSHH-LODO");
       if (sp.lodoHH > sp.ltRange) log("w", "Setpoint: o LSHH-LODO está acima da faixa do sensor e nunca será lido");
       if (sp.lodoHH >= sp.hL) log("w", "Setpoint: o LSHH-LODO está na borda do tanque; o transbordo físico acontece antes do alarme");
     }
