@@ -309,6 +309,7 @@ const SP_DEF = [
     {k:"tOverlap", l:"Sobreposição na troca", u:"s", v:2, min:0, max:60},
     {k:"tClose",   l:"Bombas param → válvula fecha", u:"s", v:3, min:0, max:60},
     {k:"cacTrip",  l:"LSH caçamba atua em", u:"%", v:95, min:50, max:100},
+    {k:"tTruck",   l:"Caminhão: deslocamento (cada trajeto)", u:"min", v:10, min:0, max:240},
   ]},
   {g:"Proteções de reserva (tempo máx.)", items:[
     {k:"tMaxFill",   l:"Enchimento do T01", u:"min", v:40, min:1, max:600},
@@ -331,6 +332,7 @@ const SP_DEF = [
 const OPT_DEF = [
   {k:"blockB01", l:"Bloquear B-01 durante enchimento e mistura do T01 (decisão 1)", v:true},
   {k:"waitMix2", l:"B-02 aguarda a mistura do T02 após cada transferência (decisão 2)", v:true},
+  {k:"autoTruck", l:"Caminhão poliguindaste troca automaticamente a caçamba cheia", v:true},
 ];
 const SP_KEY = "o2eco-sim-sp-v2";
 const sp = {};
@@ -357,6 +359,7 @@ function initState(){
         lvl:0, hh:false, hhAcked:false, feedLock:false, feed:false, feedWhy:""},
     out: {xvag:false, mpol:false, mx01:false, b01:false, mx02:false, b02:false, blodo:false, xv1:false, xv2:false, xa:false, balim:false, xalodo:false},
     flow: {},
+    truck: {st:"base", k:null, t:0},
   };
   alarms.clear();
   logItems = [];
@@ -394,8 +397,9 @@ function readSensors(){
   raw.LS02 = S.ls02Full ? 1 : 0;
   const lsl2 = L.t2 > sp.lsl2/100 ? 1 : 0;
   raw.LSL02A = lsl2; raw.LSL02B = lsl2;
-  raw.LSHC01 = L.c1 < sp.cacTrip/100 ? 1 : 0;
-  raw.LSHC02 = L.c2 < sp.cacTrip/100 ? 1 : 0;
+  // caçamba fora do lugar (no caminhão) = contato aberto, indisponível para dosagem
+  raw.LSHC01 = !cacAway("c1") && L.c1 < sp.cacTrip/100 ? 1 : 0;
+  raw.LSHC02 = !cacAway("c2") && L.c2 < sp.cacTrip/100 ? 1 : 0;
   for (const k in raw) S.DI[k] = f[k] === "auto" ? raw[k] : +f[k];
   const lvlM = L.tl * sp.hL;
   let ma = 4 + 16 * Math.min(1.0125, lvlM / sp.ltRange);
@@ -588,7 +592,7 @@ function physics(dt){
   const outL = o.blodo ? Math.min(sp.qLodo*h, L.tl*sp.capL) : 0;
   if (!F.tl) L.tl += (inL - outL)/sp.capL;
   const tot = out2 + outL, n = (o.xv1?1:0) + (o.xv2?1:0);
-  if (n){ if (o.xv1 && !F.c1) L.c1 += tot/n/sp.capC; if (o.xv2 && !F.c2) L.c2 += tot/n/sp.capC; }
+  if (n){ if (o.xv1 && !F.c1 && !cacAway("c1")) L.c1 += tot/n/sp.capC; if (o.xv2 && !F.c2 && !cacAway("c2")) L.c2 += tot/n/sp.capC; }
   fl.in1 = in1>0; fl.out1 = out1>0; fl.out2 = out2>0; fl.outL = outL>0; fl.inL = inL>0;
 
   const lim = (k, name) => {
@@ -603,11 +607,46 @@ function physics(dt){
   setAlarm("DRY_MX1", o.mx01 && L.t1 <= 0.03, "MX-01 ligado com o tanque 01 vazio");
 }
 
+/* ===================== Caminhão poliguindaste ===================== */
+// Chamado quando uma caçamba passa do LSH: manobra, iça a cheia, leva ao destino e volta com uma vazia.
+const TRUCK_PH = {chamado:"a caminho da planta", chegando:"manobrando", icando:"içando a caçamba cheia", saindo:"saindo com a caçamba cheia",
+  fora:"descarregando no destino", voltando:"trazendo caçamba vazia", descendo:"posicionando a caçamba vazia", partindo:"indo embora"};
+const TRUCK_DUR = {chegando:240, icando:180, saindo:150, voltando:240, descendo:180, partindo:150};
+const TRUCK_NEXT = {chamado:"chegando", chegando:"icando", icando:"saindo", saindo:"fora", fora:"voltando",
+  voltando:"descendo", descendo:"partindo", partindo:"base"};
+const truckDur = st => st === "chamado" ? sp.tTruck*60 : st === "fora" ? sp.tTruck*120 : TRUCK_DUR[st];
+const cacAway = k => S.truck.k === k && ["icando","saindo","fora","voltando","descendo"].includes(S.truck.st);
+const cacN = k => k === "c1" ? "01" : "02";
+
+function truck(dt){
+  const K = S.truck, L = S.lv, trip = sp.cacTrip/100;
+  if (K.st === "base"){
+    if (!sp.autoTruck) return;
+    const k = ["c1","c2"].find(c => L[c] >= trip);
+    if (k){ K.k = k; K.st = "chamado"; K.t = 0; log("i", `Caçamba ${cacN(k)} cheia: caminhão poliguindaste chamado`); }
+    return;
+  }
+  K.t += dt;
+  if (K.t < truckDur(K.st)) return;
+  const n = cacN(K.k);
+  if (K.st === "chamado" && L[K.k] < trip){
+    log("i", `Caminhão dispensado: caçamba ${n} já foi trocada`);
+    K.st = "base"; K.k = null; K.t = 0; return;
+  }
+  K.st = TRUCK_NEXT[K.st]; K.t = 0;
+  if (K.st === "chegando") log("i", `Caminhão chegou: manobrando até a caçamba ${n}`);
+  if (K.st === "saindo") log("i", `Caminhão saiu com a caçamba ${n} cheia`);
+  if (K.st === "voltando"){ L[K.k] = 0; log("i", `Caminhão voltando com a caçamba ${n} vazia`); }
+  if (K.st === "partindo") log("i", `Caçamba ${n} vazia posicionada: caminhão liberado`);
+  if (K.st === "base") K.k = null;
+}
+const truckTxt = () => S.truck.st === "base" ? "na base" : `${TRUCK_PH[S.truck.st]} · caçamba ${cacN(S.truck.k)}`;
+
 function step(dtTotal){
   const n = Math.max(1, Math.ceil(dtTotal / 0.5));
   const dt = dtTotal / n;
   for (let i = 0; i < n; i++){
-    readSensors(); sparkA(dt); sparkB(dt); physics(dt);
+    readSensors(); sparkA(dt); sparkB(dt); physics(dt); truck(dt);
     S.t += dt;
   }
 }
@@ -864,6 +903,150 @@ function init3D(){
   [[6.2,-2.2],[6.2,0.4],[8.0,-3.4],[8.0,1.3]].forEach(([x,z]) => add(new T.BoxGeometry(0.08, 1.85, 0.08), MAT.steelDark, x, 0.92, z));
   const vC1 = valve(7.25, 1.85, -3.4), vC2 = valve(7.25, 1.85, 1.3);
   const C1 = cacamba(9.6, -3.4), C2 = cacamba(9.6, 1.3);
+  C1.home = V(9.6, 0, -3.4); C2.home = V(9.6, 0, 1.3);
+
+  // ---------- caminhão poliguindaste ----------
+  // Origem no eixo traseiro, frente para +x. Dois braços laterais içam a caçamba por correntes.
+  const TRK = (() => {
+    const g = new T.Group(); g.visible = false; scene.add(g);
+    const paint = M({color:0xf0c419, metalness:0.2, roughness:0.45});
+    const glass = M({color:0x22303a, metalness:0.6, roughness:0.15});
+    const tireM = M({color:0x1c1e20, roughness:0.9});
+    const rimM = M({color:0xa9b0b6, metalness:0.6, roughness:0.35});
+    const chainM = M({color:0x3a3f44, metalness:0.7, roughness:0.4});
+    add(new T.BoxGeometry(7.0, 0.3, 1.0), MAT.steelDark, 2.1, 0.7, 0, g);
+    [-0.6, 0.6].forEach(z => add(new T.BoxGeometry(5.0, 0.2, 0.14), MAT.steelDark, 1.2, 0.95, z, g));
+    add(new T.BoxGeometry(0.12, 1.4, 2.1), MAT.steelDark, 3.72, 1.55, 0, g);
+    add(new T.BoxGeometry(1.8, 2.0, 2.3), paint, 4.75, 1.85, 0, g);
+    add(new T.BoxGeometry(0.03, 0.75, 2.0), glass, 5.66, 2.3, 0, g, false);
+    [-1.16, 1.16].forEach(z => add(new T.BoxGeometry(0.8, 0.6, 0.03), glass, 5.1, 2.3, z, g, false));
+    add(new T.BoxGeometry(1.84, 0.12, 2.34), MAT.steelDark, 4.75, 1.25, 0, g);
+    add(new T.BoxGeometry(0.18, 0.32, 2.3), MAT.steelDark, 5.72, 0.75, 0, g);
+    const headM = M({color:0xfff6d8, emissive:0xfff2c0, emissiveIntensity:0.8});
+    [-0.85, 0.85].forEach(z => add(new T.BoxGeometry(0.05, 0.16, 0.3), headM, 5.68, 1.1, z, g, false));
+    const beacon = add(new T.CylinderGeometry(0.1, 0.1, 0.16, 16), M({color:0xff9a00, emissive:0x000000}), 4.4, 2.93, 0, g, false);
+    const wheels = [];
+    [0, 1.2, 4.7].forEach(x => [-1.0, 1.0].forEach(z => {
+      const w = new T.Group(); w.position.set(x, 0.5, z); w.rotation.x = Math.PI/2; g.add(w);
+      add(new T.CylinderGeometry(0.5, 0.5, 0.36, 24), tireM, 0, 0, 0, w);
+      add(new T.CylinderGeometry(0.28, 0.28, 0.38, 16), rimM, 0, 0, 0, w, false);
+      add(new T.BoxGeometry(0.5, 0.4, 0.08), rimM, 0, 0, 0, w, false);
+      wheels.push(w);
+    }));
+    // braços laterais com pivô na traseira
+    const PIV = V(-0.4, 1.6, 0), LA = 3.8, ZA = 1.12;
+    const unitBox = (w, h) => { const geo = new T.BoxGeometry(1, w, h); geo.translate(0.5, 0, 0); return geo; };
+    const arms = [-ZA, ZA].map(z => {
+      add(new T.BoxGeometry(0.22, 0.8, 0.16), MAT.steelDark, PIV.x, 1.2, z, g);
+      const a = add(unitBox(0.2, 0.16), paint, PIV.x, PIV.y, z, g); a.scale.x = LA;
+      const cyl = add(unitBox(0.1, 0.1), MAT.steel, 0, 0, z, g);
+      return {a, cyl, z};
+    });
+    const chains = [0,1,2,3].map(() => add(new T.CylinderGeometry(0.025, 0.025, 1, 6), chainM, 0, 0, 0, g, false));
+    const up = V(0, 1, 0), tv = V(0,0,0);
+    function seg(m, a, b){
+      tv.subVectors(b, a); const len = tv.length();
+      m.position.copy(a).addScaledVector(tv, 0.5);
+      if (len > 1e-4) m.quaternion.setFromUnitVectors(up, tv.normalize());
+      m.scale.set(1, Math.max(len, 1e-3), 1);
+    }
+    function beam(m, a, b){ // caixa unitária ao longo de +x, de a até b
+      m.position.copy(a); m.rotation.set(0, 0, Math.atan2(b.y - a.y, b.x - a.x));
+      m.scale.x = Math.hypot(b.x - a.x, b.y - a.y);
+    }
+
+    // trajetos (plano XZ): chegada de ré até a caçamba e saída de frente
+    const PARK = 12.8, LANE = 15.6, OFF = -18;
+    const line = (a, b) => new T.LineCurve3(V(a[0],0,a[1]), V(b[0],0,b[1]));
+    const bez = (a, b, c, d) => new T.CubicBezierCurve3(V(a[0],0,a[1]), V(b[0],0,b[1]), V(c[0],0,c[1]), V(d[0],0,d[1]));
+    const mkPath = segs => { segs.forEach(s => s.len = s.c.getLength()); segs.tot = segs.reduce((t, s) => t + s.len, 0); return segs; };
+    const routes = {};
+    [["c1", -3.4], ["c2", 1.3]].forEach(([k, zc]) => routes[k] = {
+      zc,
+      inn: mkPath([{c: line([LANE, OFF], [LANE, zc + 3.8])},
+                   {c: bez([LANE, zc + 3.8], [LANE, zc + 1.4], [PARK + 2.4, zc], [PARK, zc]), rev:true}]),
+      out: mkPath([{c: bez([PARK, zc], [PARK + 3.2, zc], [LANE, zc - 1.5], [LANE, OFF])}]),
+    });
+    function drive(segs, u){
+      let acc = 0;
+      for (let i = 0; i < segs.length; i++){
+        const s = segs[i], f = s.len / segs.tot;
+        if (u <= acc + f || i === segs.length - 1){
+          let v = Math.min(1, Math.max(0, (u - acc) / f)); v = v*v*(3 - 2*v);
+          const p = s.c.getPointAt(v), tg = s.c.getTangentAt(v);
+          if (s.rev) tg.negate();
+          return {x:p.x, z:p.z, a:Math.atan2(-tg.z, tg.x)};
+        }
+        acc += f;
+      }
+    }
+
+    // içamento: ângulo dos braços e altura da caçamba (coordenadas do caminhão)
+    const PH_STOW = 0.3, PH_PICK = Math.acos((-3.2 - PIV.x) / LA), PH_BED = Math.acos((0.4 - PIV.x) / LA);
+    const ez = x => { x = Math.min(1, Math.max(0, x)); return x*x*(3 - 2*x); };
+    function lift(u){ // u: 0 = braços recolhidos, caçamba no chão; 1 = caçamba na carroceria
+      if (u < 0.3) return {ph: PH_STOW + (PH_PICK - PH_STOW) * ez(u / 0.3), cac:null, chain:false};
+      const s = ez((u - 0.4) / 0.6), ph = PH_PICK + (PH_BED - PH_PICK) * s;
+      return {ph, cac:{x: PIV.x + LA*Math.cos(ph), y: 1.05*s + 0.9*Math.sin(Math.PI*s)}, chain:true};
+    }
+    const ON_BED = lift(1);
+
+    let attached = null, last = null;
+    const pA = V(0,0,0), pB = V(0,0,0), tip = V(0,0,0);
+    function attach(C, on){
+      if (on && attached !== C){ g.add(C.g); C.g.rotation.set(0, 0, 0); attached = C; }
+      if (!on && attached === C){ scene.add(C.g); C.g.position.copy(C.home); C.g.rotation.set(0, 0, 0); attached = null; }
+    }
+
+    function update(dtReal, blink){
+      const K = S.truck, st = K.st;
+      const C = K.k === "c1" ? C1 : K.k === "c2" ? C2 : null;
+      [C1, C2].forEach(c => { if (c !== C) attach(c, false); });
+      const shown = C && !["base", "chamado", "fora"].includes(st);
+      g.visible = !!shown;
+      if (!shown){ if (C) attach(C, ["fora"].includes(st)); last = null; return false; }
+      const R = routes[K.k], u = Math.min(1, K.t / Math.max(1e-6, truckDur(st)));
+      let pose, L;
+      if (st === "chegando" || st === "voltando") pose = drive(R.inn, u);
+      else if (st === "saindo" || st === "partindo") pose = drive(R.out, u);
+      else pose = {x:PARK, z:R.zc, a:0};
+      if (st === "icando") L = lift(u);
+      else if (st === "descendo") L = lift(1 - u);
+      else if (st === "saindo" || st === "voltando") L = ON_BED;
+      else L = lift(0);
+      g.position.set(pose.x, 0, pose.z); g.rotation.y = pose.a;
+
+      // rodas giram conforme o deslocamento (ré gira ao contrário)
+      if (last){
+        const dx = pose.x - last.x, dz = pose.z - last.z;
+        const ds = dx*Math.cos(pose.a) - dz*Math.sin(pose.a);
+        if (Math.abs(ds) < 2) wheels.forEach(w => w.rotation.y -= ds / 0.5);
+      }
+      last = {x:pose.x, z:pose.z};
+
+      const onTruck = ["icando", "saindo", "voltando", "descendo"].includes(st);
+      attach(C, onTruck);
+      if (onTruck) C.g.position.set(L.cac ? L.cac.x : -3.2, L.cac ? L.cac.y : 0, 0);
+
+      tip.set(PIV.x + LA*Math.cos(L.ph), PIV.y + LA*Math.sin(L.ph), 0);
+      arms.forEach(A => {
+        A.a.rotation.set(0, 0, L.ph);
+        pA.set(0.9, 0.85, A.z); pB.set(PIV.x + 1.5*Math.cos(L.ph), PIV.y + 1.5*Math.sin(L.ph), A.z);
+        beam(A.cyl, pA, pB);
+      });
+      chains.forEach((m, i) => {
+        m.visible = L.chain && onTruck;
+        if (!m.visible) return;
+        const z = i < 2 ? -ZA : ZA, cz = i < 2 ? -0.9 : 0.9, cx = (i % 2 ? 1.25 : -1.25);
+        pA.set(tip.x, tip.y, z);
+        pB.set(C.g.position.x + cx, C.g.position.y + C.H + 0.12, cz);
+        seg(m, pA, pB);
+      });
+      beacon.material.emissive.setHex(blink ? 0xff9a00 : 0x000000); beacon.material.emissiveIntensity = 1.6;
+      return true;
+    }
+    return {g, update};
+  })();
   // LT-LODO: transmissor ultrassônico em braço sobre o tanque
   add(new T.BoxGeometry(1.2, 0.06, 0.08), MAT.steelDark, 2.2, 3.45, -1.7);
   add(new T.CylinderGeometry(0.1, 0.12, 0.22, 20), MAT.actuator, 1.7, 3.36, -1.7);
@@ -898,6 +1081,7 @@ function init3D(){
   label("xalodo", [-0.9, 4.25, -0.6]);
   label("inj", [5.0, 1.05, -0.25]);
   label("afl", [8.3, 0.75, -6.6]);
+  label("trk", [0, 0, 0]);
 
   const CAMS = {
     geral:    {p:[0.5, 9.5, 12.5], t:[-0.6, 0.6, -1.6]},
@@ -943,6 +1127,13 @@ function init3D(){
     const L = S.lv, o = S.out, fl = S.flow, D = S.DI, B = S.B, A = S.A;
     const blink = blinkOn();
     setLevel(T1, L.t1); setLevel(T2, L.t2); setLevel(TL, L.tl); setCac(C1, L.c1); setCac(C2, L.c2);
+    const trkOn = TRK.update(dtReal, blink);
+    labels.trk.off = !trkOn;
+    if (trkOn){
+      const tp = TRK.g.position, ta = TRK.g.rotation.y;
+      labels.trk.pos.set(tp.x + 2.5*Math.cos(ta), 3.5, tp.z - 2.5*Math.sin(ta));
+      setLabel("trk", "CAMINHÃO", TRUCK_PH[S.truck.st], "on");
+    }
     placeRing(R.hMax1, sp.hMax1/100); placeRing(R.hDem1, sp.hDem1/100); placeRing(R.lsl1, sp.lsl1/100);
     placeRing(R.hMax2, sp.hMax2/100); placeRing(R.hDem2, sp.hDem2/100); placeRing(R.lsl2, sp.lsl2/100);
     placeRing(R.lodoHH, sp.lodoHH/sp.hL); placeRing(R.lodoStart, sp.lodoStart/sp.hL); placeRing(R.lodoMin, sp.lodoMin/sp.hL);
@@ -1007,8 +1198,8 @@ function init3D(){
     setLabel("lt", "LT-LODO", ltFault ? `${fmt(S.AI.lt,1)} mA · falha` : `${fmt(S.AI.lt,1)} mA · ${fmt(B.lvl,2)} m`, ltFault || B.hh ? "al" : "lv");
     setLabel("xv1", "XV-C01", o.xv1 ? "aberta" : "fechada", o.xv1 ? "on" : "");
     setLabel("xv2", "XV-C02", o.xv2 ? "aberta" : "fechada", o.xv2 ? "on" : "");
-    setLabel("c1", "CAÇAMBA 01", `${fmt(L.c1*100,0)} % · ${D.LSHC01 ? "livre" : "cheia"}`, D.LSHC01 ? "lv" : "wn");
-    setLabel("c2", "CAÇAMBA 02", `${fmt(L.c2*100,0)} % · ${D.LSHC02 ? "livre" : "cheia"}`, D.LSHC02 ? "lv" : "wn");
+    setLabel("c1", "CAÇAMBA 01", cacAway("c1") ? "no caminhão" : `${fmt(L.c1*100,0)} % · ${D.LSHC01 ? "livre" : "cheia"}`, cacAway("c1") ? "on" : D.LSHC01 ? "lv" : "wn");
+    setLabel("c2", "CAÇAMBA 02", cacAway("c2") ? "no caminhão" : `${fmt(L.c2*100,0)} % · ${D.LSHC02 ? "livre" : "cheia"}`, cacAway("c2") ? "on" : D.LSHC02 ? "lv" : "wn");
     setLabel("p01", "PAINEL 01", "Spark A", "");
     setLabel("p02", "PAINEL 02", `Spark B · ${o.xalodo ? "XA-LODO ligada" : o.xa ? "XA-FIM ligada" : "etapa " + B.step}`, o.xalodo ? "al" : o.xa ? "wn" : "");
     setLabel("xalodo", "XA-LODO", o.xalodo ? (latched("AL_HH") ? "alarme · reconhecer" : "nível acima do LSHH") : "desligada", o.xalodo ? "al" : "");
@@ -1030,7 +1221,7 @@ function init3D(){
       const Lb = labels[id];
       const far = Lb.minor && camera.position.distanceTo(Lb.pos) > 11.5 && !Lb.cls.includes(" al");
       tmp.copy(Lb.pos).project(camera);
-      const vis = !far && tmp.z < 1 && tmp.x > -1.05 && tmp.x < 1.05 && tmp.y > -1.05 && tmp.y < 1.1;
+      const vis = !Lb.off && !far && tmp.z < 1 && tmp.x > -1.05 && tmp.x < 1.05 && tmp.y > -1.05 && tmp.y < 1.1;
       Lb.d.style.visibility = vis ? "visible" : "hidden";
       if (vis) Lb.d.style.transform = `translate(${((tmp.x+1)/2*w).toFixed(1)}px, ${((1-tmp.y)/2*h).toFixed(1)}px) translate(-50%,-100%)`;
     }
@@ -1196,7 +1387,7 @@ function renderSvg(){
   for (const k of ["c1","c2"]){
     const c = CAC[k], hgt = c.h*L[k];
     el[k+"_liq"].setAttribute("y", c.y + c.h - hgt); el[k+"_liq"].setAttribute("height", hgt);
-    el[k+"_v"].textContent = `${fmt(L[k]*100,0)} %`;
+    el[k+"_v"].textContent = cacAway(k) ? "no caminhão" : S.truck.k === k ? `${fmt(L[k]*100,0)} % · caminhão ${S.truck.st === "chamado" ? "a caminho" : "na planta"}` : `${fmt(L[k]*100,0)} %`;
   }
   placeMark("m_hmax1", sp.hMax1/100); placeMark("m_hdem1", sp.hDem1/100); placeMark("m_lsl1", sp.lsl1/100);
   placeMark("m_hmax2", sp.hMax2/100); placeMark("m_hdem2", sp.hDem2/100); placeMark("m_lsl2", sp.lsl2/100);
@@ -1278,7 +1469,8 @@ function renderPanels(){
     ["Tempo de dosagem no ciclo", `<span class="mono">${hms(B.dosT)}</span>`],
     ["Nível de lodo (LT-LODO)", S.AI.lt < 3.6 ? `<span class="pill bad">Falha do sensor</span>` : `<span class="mono">${fmt(B.lvl,2)} m</span>${B.hh ? ` <span class="pill bad">LSHH</span>` : ""}`],
     ["Alimentação (B-ALIM)", feedTxt],
-    ["Caçambas", `01 ${S.DI.LSHC01 ? "livre" : "cheia"} · 02 ${S.DI.LSHC02 ? "livre" : "cheia"}`],
+    ["Caçambas", `01 ${cacAway("c1") ? "no caminhão" : S.DI.LSHC01 ? "livre" : "cheia"} · 02 ${cacAway("c2") ? "no caminhão" : S.DI.LSHC02 ? "livre" : "cheia"}`],
+    ["Caminhão poliguindaste", S.truck.st === "base" ? (sp.autoTruck ? "Na base" : "Troca automática desligada") : `<span class="pill ok">${truckTxt()}</span>`],
   ]);
   const P = B.perm;
   const pr = (ok, txt) => `<i class="${ok ? "y" : "n"}">${ok ? "✓" : "✕"}</i><span>${txt}</span>`;
@@ -1430,8 +1622,10 @@ function buildVp(){
   $("ltMa").addEventListener("change", e => { const v = parseFloat(e.target.value); if (isFinite(v)) S.ltMa = Math.max(0, Math.min(24, v)); tick(0); });
   $("commFail").addEventListener("change", e => { S.comm = !e.target.checked; tick(0); });
   $("feedAvail").addEventListener("change", e => { S.feedAvail = e.target.checked; log("w", `Afluente ${S.feedAvail ? "disponível" : "indisponível"} na sucção da B-ALIM`); tick(0); });
-  $("swap1").addEventListener("click", () => { S.lv.c1 = 0; log("i","Operador: caçamba 01 trocada"); tick(0); });
-  $("swap2").addEventListener("click", () => { S.lv.c2 = 0; log("i","Operador: caçamba 02 trocada"); tick(0); });
+  const swap = k => { if (cacAway(k)){ log("w", `Caçamba ${cacN(k)} está no caminhão`); renderAll(); return; }
+    S.lv[k] = 0; log("i", `Operador: caçamba ${cacN(k)} trocada`); tick(0); };
+  $("swap1").addEventListener("click", () => swap("c1"));
+  $("swap2").addEventListener("click", () => swap("c2"));
   $("drain").addEventListener("click", () => { S.lv.tl = Math.max(0, S.lv.tl - 1/sp.capL); log("i","Operador: esgotou 1 m³ do tanque de lodo por fora da automação"); tick(0); });
 }
 function syncVp(){
