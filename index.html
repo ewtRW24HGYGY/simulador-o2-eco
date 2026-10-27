@@ -570,7 +570,8 @@ function sparkB(dt){
     }
     case 7:
       B.pumps = false; B.xv1 = false; B.xv2 = false; B.xa = true;
-      if (c1 === 1 && c2 === 1 && !latched("AL_DOS")){ B.xa = false; goStep(0, "caçambas trocadas"); }
+      // basta uma caçamba livre para retomar (a outra pode estar no caminhão)
+      if ((c1 === 1 || c2 === 1) && !latched("AL_DOS")){ B.xa = false; goStep(0, `caçamba ${c1 === 1 ? "01" : "02"} livre`); }
       break;
   }
   const pumpsOk = B.pumps && (B.xv1 || B.xv2);
